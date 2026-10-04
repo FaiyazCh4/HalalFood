@@ -1,0 +1,6 @@
+{
+  "name": "HalalCheck - Food Barcode Scanner & Ingredients Verifier",
+  "description": "Scan food product barcodes or ingredient labels to instantly verify Halal, Haram, or Mushbooh status with comprehensive additive breakdown and Islamic dietary jurisprudence.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
