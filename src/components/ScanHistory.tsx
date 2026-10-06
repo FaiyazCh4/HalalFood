@@ -16,7 +16,9 @@ import {
   Image as ImageIcon,
   Copy,
   X,
+  FileText,
 } from 'lucide-react';
+import { jsPDF } from 'jspdf';
 import {
   ResponsiveContainer,
   BarChart,
@@ -66,7 +68,7 @@ export const ScanHistory: React.FC<ScanHistoryProps> = ({
   onPopulateSampleHistory,
   cachedReportsCount,
 }) => {
-  const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | null>(null);
+  const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | 'pdf' | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [chartMode, setChartMode] = useState<ChartViewMode>('bar');
@@ -327,6 +329,220 @@ export const ScanHistory: React.FC<ScanHistoryProps> = ({
     );
 
     setExportedFormat('json');
+    setTimeout(() => setExportedFormat(null), 2500);
+  };
+
+  // Export entire scan history as a structured, multi-page PDF report
+  const handleExportPdf = () => {
+    const targetRecords = filteredHistory.length > 0 ? filteredHistory : history;
+    if (targetRecords.length === 0) return;
+
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'pt',
+      format: 'a4',
+    });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 36;
+    const contentWidth = pageWidth - margin * 2;
+
+    // 1. Emerald Header Banner on Page 1
+    doc.setFillColor(6, 95, 70);
+    doc.rect(0, 0, pageWidth, 96, 'F');
+
+    doc.setTextColor(167, 243, 208);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('HALALCHECK · ISLAMIC DIETARY VERIFICATION LOG', margin, 30);
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('Scan History & Halal Status Report', margin, 56);
+
+    doc.setTextColor(209, 250, 229);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    const dateStamp = new Date().toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    doc.text(
+      `Generated on ${dateStamp} · Total Verified Products: ${targetRecords.length}`,
+      margin,
+      76
+    );
+
+    // 2. Summary KPI Row
+    const halalCertCount = targetRecords.filter(
+      (i) => i.evaluation.status === 'HALAL_CERTIFIED'
+    ).length;
+    const halalCleanCount = targetRecords.filter(
+      (i) => i.evaluation.status === 'HALAL'
+    ).length;
+    const mushboohCount = targetRecords.filter(
+      (i) => i.evaluation.status === 'MUSHBOOH'
+    ).length;
+    const haramCount = targetRecords.filter(
+      (i) => i.evaluation.status === 'HARAM'
+    ).length;
+    const halalRate = Math.round(
+      ((halalCertCount + halalCleanCount) / targetRecords.length) * 100
+    );
+
+    let y = 114;
+    const boxGap = 10;
+    const boxW = (contentWidth - boxGap * 3) / 4;
+    const boxH = 48;
+
+    const kpiBoxes = [
+      { label: 'Halal Basket Rate', val: `${halalRate}%`, r: 4, g: 120, b: 87 },
+      {
+        label: 'Halal / Certified',
+        val: `${halalCertCount + halalCleanCount}`,
+        r: 6,
+        g: 95,
+        b: 70,
+      },
+      { label: 'Mushbooh (Doubtful)', val: `${mushboohCount}`, r: 180, g: 83, b: 9 },
+      { label: 'Haram (Prohibited)', val: `${haramCount}`, r: 190, g: 18, b: 60 },
+    ];
+
+    kpiBoxes.forEach((box, idx) => {
+      const bx = margin + idx * (boxW + boxGap);
+      doc.setFillColor(245, 245, 244);
+      doc.setDrawColor(214, 211, 209);
+      doc.roundedRect(bx, y, boxW, boxH, 6, 6, 'FD');
+
+      doc.setTextColor(87, 83, 78);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text(box.label.toUpperCase(), bx + 10, y + 17);
+
+      doc.setTextColor(box.r, box.g, box.b);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.text(box.val, bx + 10, y + 38);
+    });
+
+    y += boxH + 22;
+
+    // 3. Table Column Header Helper
+    const drawTableHeader = (topY: number) => {
+      doc.setFillColor(28, 25, 23);
+      doc.rect(margin, topY, contentWidth, 24, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text('#', margin + 8, topY + 15);
+      doc.text('PRODUCT NAME & BRAND', margin + 28, topY + 15);
+      doc.text('BARCODE / UPC', margin + 245, topY + 15);
+      doc.text('FINAL HALAL STATUS', margin + 345, topY + 15);
+      doc.text('SCANNED DATE', margin + 455, topY + 15);
+      return topY + 24;
+    };
+
+    y = drawTableHeader(y);
+
+    // 4. Iterate over all history items and render structured rows
+    targetRecords.forEach((item, index) => {
+      const summaryLine = (item.evaluation.summary || '').slice(0, 115);
+      const rowHeight = 44;
+
+      if (y + rowHeight > pageHeight - 48) {
+        doc.addPage();
+        y = 40;
+        y = drawTableHeader(y);
+      }
+
+      // Alternating row background
+      if (index % 2 === 0) {
+        doc.setFillColor(250, 250, 249);
+      } else {
+        doc.setFillColor(255, 255, 255);
+      }
+      doc.setDrawColor(231, 229, 228);
+      doc.rect(margin, y, contentWidth, rowHeight, 'FD');
+
+      // Index
+      doc.setTextColor(120, 113, 108);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text(String(index + 1), margin + 8, y + 16);
+
+      // Product Name & Brand
+      doc.setTextColor(28, 25, 23);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      const prodTitle =
+        item.product.product_name.length > 34
+          ? item.product.product_name.slice(0, 34) + '...'
+          : item.product.product_name;
+      doc.text(prodTitle, margin + 28, y + 15);
+
+      doc.setTextColor(120, 113, 108);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      const brandAndSummary = `${item.product.brands || 'Brand'} — ${
+        summaryLine.length > 62 ? summaryLine.slice(0, 62) + '...' : summaryLine
+      }`;
+      doc.text(brandAndSummary, margin + 28, y + 31);
+
+      // Barcode
+      doc.setTextColor(68, 64, 60);
+      doc.setFont('courier', 'bold');
+      doc.setFontSize(9);
+      doc.text(item.product.code, margin + 245, y + 16);
+
+      // Final Halal Status Pill
+      const st = item.evaluation.status;
+      if (st === 'HALAL' || st === 'HALAL_CERTIFIED') {
+        doc.setFillColor(209, 250, 229);
+        doc.setTextColor(6, 95, 70);
+      } else if (st === 'HARAM') {
+        doc.setFillColor(255, 228, 230);
+        doc.setTextColor(190, 18, 60);
+      } else {
+        doc.setFillColor(254, 243, 199);
+        doc.setTextColor(180, 83, 9);
+      }
+      const statusLabel = st === 'HALAL_CERTIFIED' ? 'HALAL CERTIFIED' : st;
+      doc.roundedRect(margin + 345, y + 6, 96, 16, 4, 4, 'F');
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text(statusLabel, margin + 351, y + 17);
+
+      // Scanned Date
+      doc.setTextColor(87, 83, 78);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      const scannedStr = new Date(item.timestamp).toLocaleDateString();
+      doc.text(scannedStr, margin + 455, y + 16);
+
+      y += rowHeight;
+    });
+
+    // 5. Add Page Numbers & Footer on all pages
+    const pageCount = doc.getNumberOfPages();
+    for (let p = 1; p <= pageCount; p++) {
+      doc.setPage(p);
+      doc.setTextColor(120, 113, 108);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(
+        `HalalCheck — Personal Verified Product Records · Page ${p} of ${pageCount}`,
+        margin,
+        pageHeight - 20
+      );
+    }
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    doc.save(`halalcheck-scan-history-${dateStr}.pdf`);
+
+    setExportedFormat('pdf');
     setTimeout(() => setExportedFormat(null), 2500);
   };
 
@@ -881,24 +1097,47 @@ export const ScanHistory: React.FC<ScanHistoryProps> = ({
 
           {history.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
+              {/* Download Structured PDF Report Button */}
+              <button
+                onClick={handleExportPdf}
+                className={`text-xs font-semibold px-3.5 py-2 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                  exportedFormat === 'pdf'
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 dark:border-emerald-600'
+                }`}
+                title="Download entire scan history as a structured, color-coded PDF report"
+              >
+                {exportedFormat === 'pdf' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-white" />
+                    <span>PDF Downloaded!</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-3.5 h-3.5 text-white" />
+                    <span>Download PDF Report</span>
+                  </>
+                )}
+              </button>
+
               {/* Export JSON Button */}
               <button
                 onClick={handleExportJson}
                 className={`text-xs font-semibold px-3.5 py-2 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
                   exportedFormat === 'json'
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 dark:border-emerald-600'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-white dark:bg-stone-800 hover:bg-stone-50 dark:hover:bg-stone-700 border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-200'
                 }`}
                 title="Export scanned product history as a structured JSON file"
               >
                 {exportedFormat === 'json' ? (
                   <>
-                    <Check className="w-3.5 h-3.5 text-white" />
+                    <Check className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
                     <span>JSON Exported!</span>
                   </>
                 ) : (
                   <>
-                    <FileJson className="w-3.5 h-3.5 text-white" />
+                    <FileJson className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400" />
                     <span>Export JSON</span>
                   </>
                 )}

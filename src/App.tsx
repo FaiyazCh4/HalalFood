@@ -401,10 +401,39 @@ export default function App() {
     setActiveTab('scanner');
   };
 
-  // Handle Barcode Lookups
+  // Handle Barcode & Shareable HalalCheck QR Code Lookups
   const handleBarcodeDetected = async (barcode: string) => {
-    const cleanBarcode = barcode.trim();
+    let cleanBarcode = barcode.trim();
     if (!cleanBarcode) return;
+
+    // 1. Parse HalalCheck Compact QR Payload (e.g., HALALCHECK|BARCODE:3017620422003|STATUS:HALAL_CERTIFIED...)
+    if (cleanBarcode.startsWith('HALALCHECK|')) {
+      const parts = cleanBarcode.split('|');
+      const barcodePart = parts.find((p) => p.startsWith('BARCODE:'));
+      const statusPart = parts.find((p) => p.startsWith('STATUS:'));
+      if (barcodePart) {
+        cleanBarcode = barcodePart.replace('BARCODE:', '').trim();
+        if (statusPart) {
+          setInfoToast(
+            `Scanned HalalCheck QR Badge (Barcode ${cleanBarcode} · Encoded Status: ${statusPart.replace(
+              'STATUS:',
+              ''
+            )}).`
+          );
+        }
+      }
+    } else if (cleanBarcode.includes('barcode=')) {
+      // 2. Parse HalalCheck Deep-Link QR URL (e.g., https://.../?barcode=3017620422003&halal_status=HALAL_CERTIFIED)
+      try {
+        const urlObj = new URL(cleanBarcode);
+        const bcParam = urlObj.searchParams.get('barcode');
+        if (bcParam) {
+          cleanBarcode = bcParam.trim();
+        }
+      } catch {
+        // ignore URL parse error
+      }
+    }
 
     // Check if offline - retrieve immediately from IndexedDB
     if (!navigator.onLine) {

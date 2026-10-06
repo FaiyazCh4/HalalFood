@@ -33,7 +33,13 @@ const barcodeCache = new Map<string, any>();
 // Normalize 1D barcode or 2D QR code payload (GS1 Digital Link, OpenFoodFacts URL, deep link, JSON, or raw code)
 function normalizeScannedPayload(rawInput: string): {
   extractedBarcode: string;
-  qrMetadata?: { name?: string; brand?: string; ingredients?: string };
+  qrMetadata?: {
+    name?: string;
+    brand?: string;
+    ingredients?: string;
+    isHalalCertified?: boolean;
+    certificationAuthority?: string;
+  };
 } {
   const trimmed = rawInput.trim();
 
@@ -48,6 +54,8 @@ function normalizeScannedPayload(rawInput: string): {
           name: parsed.name || parsed.product_name,
           brand: parsed.brand || parsed.brands,
           ingredients: parsed.ingredients || parsed.ingredients_text,
+          isHalalCertified: Boolean(parsed.isHalalCertified),
+          certificationAuthority: parsed.certificationAuthority,
         },
       };
     } catch {
@@ -202,28 +210,34 @@ async function fetchOpenFoodFacts(barcode: string) {
     console.warn(`OpenFoodFacts fetch error for barcode ${cleanBarcode}:`, err.message);
   }
 
-  // Fallback for QR codes containing direct product/ingredient metadata
+  // Fallback for QR codes or Gemini Suggested Alternatives containing direct product/ingredient metadata
   if (qrMetadata?.ingredients || (!/^\d+$/.test(cleanBarcode) && cleanBarcode.length > 8)) {
     const prodName = qrMetadata?.name || 'QR Scanned Food Item';
-    const prodBrand = qrMetadata?.brand || 'QR Label';
+    const prodBrand = qrMetadata?.brand || 'Verified Brand';
     const ingText = qrMetadata?.ingredients || barcode;
-    const localEval = analyzeIngredientsLocally(prodName, ingText, [], []);
+    const labels = qrMetadata?.isHalalCertified ? ['en:halal'] : [];
+    const localEval = analyzeIngredientsLocally(prodName, ingText, labels, []);
 
     return {
       source: 'qrcode_payload',
       product: {
-        code: qrMetadata?.name ? `QR-${Date.now().toString().slice(-6)}` : cleanBarcode.slice(0, 24),
+        code: qrMetadata?.name ? `ALT-${Date.now().toString().slice(-6)}` : cleanBarcode.slice(0, 24),
         product_name: prodName,
         brands: prodBrand,
         ingredients_text: ingText,
         image_url: '',
-        categories: 'QR Scanned Product',
-        labels_tags: [],
+        categories: 'Verified Halal Alternative',
+        labels_tags: labels,
         additives_tags: [],
         nutriments: {},
         serving_size: '100g',
       },
-      evaluation: localEval,
+      evaluation: {
+        ...localEval,
+        status: qrMetadata?.isHalalCertified ? 'HALAL_CERTIFIED' : localEval.status,
+        isHalalCertified: Boolean(qrMetadata?.isHalalCertified || localEval.isHalalCertified),
+        certificationAuthority: qrMetadata?.certificationAuthority || localEval.certificationAuthority,
+      },
     };
   }
 
@@ -527,6 +541,296 @@ Evaluate its Halal/Haram status with strict Islamic food science accuracy.`,
   } catch (err: any) {
     console.error('Error in Gemini AI analysis:', err);
     res.status(500).json({ error: err.message || 'Gemini AI analysis failed' });
+  }
+});
+
+// 3b. Gemini AI Auto-Translate & Clarify Ingredients endpoint
+const translationCache = new Map<string, any>();
+
+app.post('/api/translate-ingredients', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ingredientsText, productName, targetLanguage } = req.body;
+    const rawIngredients = (ingredientsText || '').trim();
+    const preferredLang = (targetLanguage || 'English').trim();
+
+    if (!rawIngredients) {
+      res.status(400).json({ error: 'Ingredient list is required for translation.' });
+      return;
+    }
+
+    const cacheKey = `${productName || ''}|${preferredLang}|${rawIngredients.slice(0, 300)}`;
+    if (translationCache.has(cacheKey)) {
+      res.json({
+        success: true,
+        translation: translationCache.get(cacheKey),
+      });
+      return;
+    }
+
+    const prompt = `
+You are an expert multilingual food scientist and Islamic dietary (Halal/Haram) translator.
+Translate and clarify the following product ingredient label into the user's preferred language: "${preferredLang}".
+
+Product Name: ${productName || 'Food Product'}
+Original Ingredient Label: ${rawIngredients}
+
+Instructions:
+1. Detect the source language(s) of the original ingredient label (e.g., French, German, Japanese, Spanish, Technical English, etc.).
+2. Translate the entire ingredient list into clear, natural "${preferredLang}".
+3. Identify any complex, technical, or foreign food additives / E-numbers / animal-or-plant derivatives and explain them in plain "${preferredLang}" along with their Halal status (HALAL, MUSHBOOH, or HARAM).
+4. Provide a 1-sentence Halal clarity note in "${preferredLang}".
+`;
+
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        detectedSourceLanguage: { type: Type.STRING },
+        targetLanguage: { type: Type.STRING },
+        translatedIngredientsText: { type: Type.STRING },
+        summaryInTargetLanguage: { type: Type.STRING },
+        clarifiedTerms: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              originalTerm: { type: Type.STRING },
+              translatedTerm: { type: Type.STRING },
+              plainExplanation: { type: Type.STRING },
+              halalStatus: {
+                type: Type.STRING,
+                enum: ['HALAL', 'MUSHBOOH', 'HARAM'],
+              },
+            },
+            required: ['originalTerm', 'translatedTerm', 'plainExplanation', 'halalStatus'],
+          },
+        },
+      },
+      required: [
+        'detectedSourceLanguage',
+        'targetLanguage',
+        'translatedIngredientsText',
+        'summaryInTargetLanguage',
+        'clarifiedTerms',
+      ],
+    };
+
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    let parsedTranslation: any = null;
+    let lastErr: any = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            temperature: 0.2,
+            responseMimeType: 'application/json',
+            responseSchema,
+          },
+        });
+        parsedTranslation = JSON.parse(response.text?.trim() || '{}');
+        break;
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`Translation model ${model} failed, trying fallback...`, err?.message);
+      }
+    }
+
+    if (!parsedTranslation) {
+      throw lastErr || new Error('Gemini translation request failed.');
+    }
+
+    translationCache.set(cacheKey, parsedTranslation);
+
+    res.json({
+      success: true,
+      translation: parsedTranslation,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/translate-ingredients:', err);
+    res.status(500).json({
+      error: err.message || 'Failed to translate ingredients with Gemini API.',
+    });
+  }
+});
+
+// 3c. Gemini AI Suggested Confirmed-Halal Alternatives endpoint (for HARAM or MUSHBOOH items)
+const suggestedAlternativesCache = new Map<string, any>();
+
+app.post('/api/suggest-alternatives', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      productName,
+      brand,
+      category,
+      status,
+      criticalIngredients,
+      ingredientsText,
+      dietaryFilter,
+    } = req.body;
+
+    const cleanName = (productName || 'Scanned Food Item').trim();
+    const cleanCategory = (category || 'Grocery Food').trim();
+    const cleanFilter = (dietaryFilter || 'all').trim();
+
+    const cacheKey = `${cleanName.toLowerCase()}|${cleanCategory.toLowerCase()}|${status}|${cleanFilter}`;
+    if (suggestedAlternativesCache.has(cacheKey)) {
+      res.json({
+        success: true,
+        suggestions: suggestedAlternativesCache.get(cacheKey),
+      });
+      return;
+    }
+
+    const flaggedList = Array.isArray(criticalIngredients)
+      ? criticalIngredients.map((c: any) => `${c.name} (${c.status}: ${c.reason || c.source || ''})`).join('; ')
+      : 'High-risk or doubtful uncertified additives';
+
+    const knownHalalSamples = SAMPLE_PRODUCTS.filter(
+      (p) => p.status === 'HALAL' || p.isHalalCertified
+    )
+      .map((p) => `${p.name} by ${p.brand} (Barcode: ${p.barcode}, Cert: ${p.certificationAuthority || 'Clean Halal'})`)
+      .join(' | ');
+
+    const prompt = `
+You are an expert Islamic food scientist and Halal grocery advisor.
+A user just scanned a food product that was flagged as "${status || 'HARAM / MUSHBOOH'}".
+Search for and recommend 4 real-world, confirmed-Halal (or Halal-certified / 100% plant-based permissible) alternative products that closely match the flavor, texture, and culinary use of this product.
+
+Scanned Product Details:
+- Product Name: "${cleanName}"
+- Brand: "${brand || 'Unknown'}"
+- Category: "${cleanCategory}"
+- Flagged Status: "${status || 'HARAM'}"
+- Problematic Flagged Ingredients to Avoid: ${flaggedList}
+- Original Ingredients Snippet: ${(ingredientsText || '').slice(0, 300)}
+- User Preference Filter: ${
+      cleanFilter === 'certified_only'
+        ? 'Prioritize formally Halal-certified products with recognized Islamic authority seals (IFANCA, JAKIM, MUI, HMC, TSE)'
+        : cleanFilter === 'plant_vegan'
+        ? 'Prioritize 100% plant-based / vegan confirmed-Halal alternatives (using fruit pectin, soy/sunflower lecithin, vegetable oils)'
+        : 'Include a mix of formally Halal-certified products and 100% clean plant-based confirmed-Halal products'
+    }
+
+Known Verified Catalog Products (include barcode ONLY if recommending one of these exact products):
+${knownHalalSamples}
+
+Return a JSON object with:
+1. "replacementStrategy": A concise 1-sentence explanation of how these alternatives eliminate the specific Haram/Mushbooh risk found in "${cleanName}".
+2. "alternatives": Array of 4 confirmed-Halal similar products, each containing:
+   - "name": Full product name
+   - "brand": Brand name
+   - "status": Either "HALAL_CERTIFIED" or "HALAL"
+   - "certificationBody": Name of Halal certifier (e.g. "IFANCA", "JAKIM", "TSE Halal", "HMC", or "100% Plant-Based / Vegan Halal")
+   - "whyHalal": Clear explanation of why this alternative is confirmed Halal and how it replaces the problematic ingredient in "${cleanName}"
+   - "similarityScore": Integer from 86 to 99 representing taste & category match
+   - "keyCleanIngredients": Comma-separated list of clean permissible ingredients in this product
+   - "barcode": Optional barcode string if known
+`;
+
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        replacementStrategy: { type: Type.STRING },
+        alternatives: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              brand: { type: Type.STRING },
+              status: {
+                type: Type.STRING,
+                enum: ['HALAL_CERTIFIED', 'HALAL'],
+              },
+              certificationBody: { type: Type.STRING },
+              whyHalal: { type: Type.STRING },
+              similarityScore: { type: Type.INTEGER },
+              keyCleanIngredients: { type: Type.STRING },
+              barcode: { type: Type.STRING },
+            },
+            required: [
+              'name',
+              'brand',
+              'status',
+              'certificationBody',
+              'whyHalal',
+              'similarityScore',
+              'keyCleanIngredients',
+            ],
+          },
+        },
+      },
+      required: ['replacementStrategy', 'alternatives'],
+    };
+
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    let parsedSuggestions: any = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            temperature: 0.25,
+            responseMimeType: 'application/json',
+            responseSchema,
+          },
+        });
+        parsedSuggestions = JSON.parse(response.text?.trim() || '{}');
+        if (parsedSuggestions && Array.isArray(parsedSuggestions.alternatives) && parsedSuggestions.alternatives.length > 0) {
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`Suggest alternatives model ${model} failed, trying fallback...`, err?.message);
+      }
+    }
+
+    // Fallback to curated category benchmark alternatives if all AI models experience transient high load
+    if (!parsedSuggestions || !Array.isArray(parsedSuggestions.alternatives) || parsedSuggestions.alternatives.length === 0) {
+      const benchmark = getCategoryMarketComparison(cleanCategory, cleanName);
+      parsedSuggestions = {
+        replacementStrategy: `Replaces flagged ${status || 'risk'} additives in ${cleanName} with verified Halal-certified and plant-based formulations in the ${benchmark.categoryName} category.`,
+        alternatives: benchmark.alternatives.map((alt, idx) => ({
+          name: alt.name,
+          brand: alt.brand,
+          status: alt.status,
+          certificationBody: alt.status === 'HALAL_CERTIFIED' ? (benchmark.commonCertifiers[0] || 'Halal Certified') : '100% Plant-Based Halal',
+          whyHalal: alt.certificationNote,
+          similarityScore: Math.max(88, 96 - idx * 3),
+          keyCleanIngredients: 'Plant-derived emulsifiers, natural botanical flavorings, zero animal rennet or porcine gelatin',
+          barcode: alt.barcode || '',
+        })),
+      };
+    }
+
+    // Match any suggested product names to SAMPLE_PRODUCTS barcodes if not already populated
+    parsedSuggestions.alternatives = parsedSuggestions.alternatives.map((alt: any) => {
+      const matchedSample = SAMPLE_PRODUCTS.find(
+        (s) =>
+          (s.status === 'HALAL' || s.isHalalCertified) &&
+          (s.name.toLowerCase().includes(String(alt.name || '').toLowerCase()) ||
+            String(alt.name || '').toLowerCase().includes(s.name.toLowerCase()))
+      );
+      return {
+        ...alt,
+        barcode: matchedSample ? matchedSample.barcode : alt.barcode || '',
+      };
+    });
+
+    suggestedAlternativesCache.set(cacheKey, parsedSuggestions);
+
+    res.json({
+      success: true,
+      suggestions: parsedSuggestions,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/suggest-alternatives:', err);
+    res.status(500).json({
+      error: err.message || 'Failed to generate Halal alternatives with Gemini API.',
+    });
   }
 });
 

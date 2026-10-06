@@ -8,9 +8,27 @@ export interface AdditiveInfo {
   jurisprudenceNote?: string;
 }
 
+export interface HalalConfidenceFactor {
+  label: string;
+  impact: string;
+  type: 'positive' | 'warning' | 'negative';
+}
+
+export interface HalalConfidenceBreakdown {
+  score: number; // 0 to 100
+  tierLabel: string;
+  highRiskCount: number;
+  mediumRiskCount: number;
+  lowRiskCount: number;
+  certificationBonus: number;
+  factors: HalalConfidenceFactor[];
+}
+
 export interface ProductHalalEvaluation {
   status: 'HALAL' | 'HARAM' | 'MUSHBOOH' | 'HALAL_CERTIFIED';
   confidence: 'HIGH' | 'MEDIUM' | 'NEEDS_VERIFICATION';
+  confidenceScore?: number;
+  confidenceBreakdown?: HalalConfidenceBreakdown;
   summary: string;
   isHalalCertified: boolean;
   certificationAuthority?: string;
@@ -597,9 +615,20 @@ export function analyzeIngredientsLocally(
     }
   }
 
+  const confidenceBreakdown = calculateHalalConfidenceScore({
+    status,
+    isHalalCertified,
+    certificationAuthority: isHalalCertified ? 'Verified Halal on package' : undefined,
+    criticalIngredients: critical,
+    allIngredients: allParsed,
+    ingredientsText,
+  });
+
   return {
     status,
     confidence,
+    confidenceScore: confidenceBreakdown.score,
+    confidenceBreakdown,
     summary,
     isHalalCertified,
     certificationAuthority: isHalalCertified ? 'Verified Halal on package' : undefined,
@@ -614,6 +643,236 @@ export function analyzeIngredientsLocally(
         : undefined
     },
     recommendations
+  };
+}
+
+/**
+ * Calculates a 0-100% Halal Confidence Score based on:
+ * 1. Certification Status (Halal Certified vs Uncertified)
+ * 2. Presence & count of High-Risk (Haram) ingredients
+ * 3. Presence & count of Medium-Risk (Mushbooh / ambiguous origin) ingredients
+ * 4. Presence & ratio of Low-Risk (Halal plant/mineral/synthetic) ingredients
+ */
+export function calculateHalalConfidenceScore(params: {
+  status: 'HALAL' | 'HARAM' | 'MUSHBOOH' | 'HALAL_CERTIFIED';
+  isHalalCertified: boolean;
+  certificationAuthority?: string;
+  criticalIngredients?: Array<{
+    name: string;
+    status: 'HALAL' | 'HARAM' | 'MUSHBOOH';
+    reason?: string;
+    source?: string;
+  }>;
+  allIngredients?: Array<{
+    name: string;
+    status: 'HALAL' | 'HARAM' | 'MUSHBOOH';
+  }>;
+  ingredientsText?: string;
+}): HalalConfidenceBreakdown {
+  const {
+    status,
+    isHalalCertified,
+    certificationAuthority,
+    criticalIngredients = [],
+    allIngredients = [],
+    ingredientsText = '',
+  } = params;
+
+  const haramCriticals = criticalIngredients.filter((c) => c.status === 'HARAM');
+  const mushboohCriticals = criticalIngredients.filter((c) => c.status === 'MUSHBOOH');
+
+  const highRiskFromTable = allIngredients.filter((i) => i.status === 'HARAM').length;
+  const mediumRiskFromTable = allIngredients.filter((i) => i.status === 'MUSHBOOH').length;
+  const lowRiskFromTable = allIngredients.filter((i) => i.status === 'HALAL').length;
+
+  const highRiskCount = Math.max(haramCriticals.length, highRiskFromTable);
+  const mediumRiskCount = Math.max(mushboohCriticals.length, mediumRiskFromTable);
+  const lowRiskCount = Math.max(
+    lowRiskFromTable,
+    ingredientsText
+      ? Math.max(0, ingredientsText.split(/[,;]/).filter(Boolean).length - highRiskCount - mediumRiskCount)
+      : 0
+  );
+
+  const factors: HalalConfidenceFactor[] = [];
+  let score = 85;
+  let certificationBonus = 0;
+
+  // Case 1: High-Risk (HARAM) ingredients detected or overall HARAM status
+  if (status === 'HARAM' || highRiskCount > 0) {
+    const hasExplicitSwineOrAlcohol = haramCriticals.some((c) =>
+      /pork|porcine|lard|bacon|ham|gelatin \(pork\)|wine|beer|rum|vodka|whiskey|brandy|liqueur|alcohol/i.test(
+        `${c.name} ${c.reason || ''} ${c.source || ''}`
+      )
+    );
+
+    score = hasExplicitSwineOrAlcohol ? 0 : Math.max(3, 12 - highRiskCount * 4);
+
+    factors.push({
+      label: `${highRiskCount || 1} High-Risk (Haram) Ingredient${highRiskCount === 1 ? '' : 's'} Detected`,
+      impact: `-${100 - score}%`,
+      type: 'negative',
+    });
+
+    if (lowRiskCount > 0) {
+      factors.push({
+        label: `${lowRiskCount} Low-Risk Permissible Base Ingredients`,
+        impact: 'Overridden by Haram contaminant',
+        type: 'warning',
+      });
+    }
+
+    factors.push({
+      label: isHalalCertified ? 'Conflicting Certification Claim' : 'No Halal Certification',
+      impact: '0%',
+      type: 'negative',
+    });
+
+    return {
+      score,
+      tierLabel: score === 0 ? 'Zero Halal Confidence (Prohibited)' : 'Very Low Confidence (Prohibited Risk)',
+      highRiskCount: Math.max(1, highRiskCount),
+      mediumRiskCount,
+      lowRiskCount,
+      certificationBonus: 0,
+      factors,
+    };
+  }
+
+  // Case 2: Officially Halal Certified product
+  if (status === 'HALAL_CERTIFIED' || isHalalCertified) {
+    score = 85;
+    certificationBonus = 15;
+    score += certificationBonus;
+
+    factors.push({
+      label: certificationAuthority
+        ? `Official Halal Certification (${certificationAuthority})`
+        : 'Verified Halal Certification Seal',
+      impact: '+15%',
+      type: 'positive',
+    });
+
+    if (lowRiskCount > 0) {
+      factors.push({
+        label: `${lowRiskCount} Verified Low-Risk Ingredients`,
+        impact: '+85% Base',
+        type: 'positive',
+      });
+    }
+
+    if (mediumRiskCount > 0) {
+      // Minor deduction if emulsifiers exist, even though certified
+      score = Math.max(94, score - mediumRiskCount * 2);
+      factors.push({
+        label: `${mediumRiskCount} Audited Emulsifier/Enzyme${mediumRiskCount > 1 ? 's' : ''} (Covered by Certifier)`,
+        impact: `-${mediumRiskCount * 2}%`,
+        type: 'positive',
+      });
+    }
+
+    score = Math.min(100, Math.max(92, score));
+    return {
+      score,
+      tierLabel: 'Verified High Confidence (Halal Certified)',
+      highRiskCount: 0,
+      mediumRiskCount,
+      lowRiskCount,
+      certificationBonus,
+      factors,
+    };
+  }
+
+  // Case 3: Medium-Risk / Doubtful (MUSHBOOH) uncertified product
+  if (status === 'MUSHBOOH' || mediumRiskCount > 0) {
+    const baseUncertified = 74;
+    const riskPenalty = Math.min(52, Math.max(18, mediumRiskCount * 16));
+    const lowRiskBoost = Math.min(8, Math.floor(lowRiskCount * 1.2));
+    score = Math.max(20, Math.min(64, baseUncertified - riskPenalty + lowRiskBoost));
+
+    if (lowRiskCount > 0) {
+      factors.push({
+        label: `${lowRiskCount} Low-Risk Plant / Mineral Ingredients`,
+        impact: `+${baseUncertified + lowRiskBoost}% Base`,
+        type: 'positive',
+      });
+    }
+
+    factors.push({
+      label: `${Math.max(1, mediumRiskCount)} Ambiguous / Medium-Risk Additive${
+        mediumRiskCount === 1 ? '' : 's'
+      } (Uncertified Source)`,
+      impact: `-${riskPenalty}%`,
+      type: 'warning',
+    });
+
+    factors.push({
+      label: 'No Formal Halal Certification Logo on Label',
+      impact: 'Source Verification Needed',
+      type: 'warning',
+    });
+
+    return {
+      score,
+      tierLabel:
+        score >= 50
+          ? 'Moderate Confidence (Verify Additive Source)'
+          : 'Low-Moderate Confidence (High Ambiguity)',
+      highRiskCount: 0,
+      mediumRiskCount: Math.max(1, mediumRiskCount),
+      lowRiskCount,
+      certificationBonus: 0,
+      factors,
+    };
+  }
+
+  // Case 4: Uncertified HALAL product with only Low-Risk ingredients
+  const hasGenericFlavoring = /flavour|flavor|natural flavor|spices/i.test(ingredientsText);
+  const isExplicitlyPlantOrVegan = /vegan|vegetarian|plant-based|100% plant|soya lecithin/i.test(
+    ingredientsText
+  );
+
+  score = 88;
+  factors.push({
+    label: `${Math.max(1, lowRiskCount)} Low-Risk Permissible Ingredients (Zero Haram/Mushbooh)`,
+    impact: '+88% Base',
+    type: 'positive',
+  });
+
+  if (isExplicitlyPlantOrVegan) {
+    score += 5;
+    factors.push({
+      label: 'Plant-Based / Vegetarian Ingredient Profile',
+      impact: '+5%',
+      type: 'positive',
+    });
+  }
+
+  if (hasGenericFlavoring) {
+    score -= 3;
+    factors.push({
+      label: 'Generic Flavoring Listed (Trace Carrier Uncertified)',
+      impact: '-3%',
+      type: 'warning',
+    });
+  }
+
+  factors.push({
+    label: 'Uncertified Clean Label (Max 100% requires Halal Seal)',
+    impact: 'Cap 93%',
+    type: 'positive',
+  });
+
+  score = Math.max(82, Math.min(93, score));
+
+  return {
+    score,
+    tierLabel: 'Strong Ingredient Confidence (Clean Label)',
+    highRiskCount: 0,
+    mediumRiskCount: 0,
+    lowRiskCount: Math.max(1, lowRiskCount),
+    certificationBonus: 0,
+    factors,
   };
 }
 

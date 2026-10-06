@@ -1,4 +1,5 @@
 import { EvaluationData, ProductData } from '../components/ProductResultCard.tsx';
+import { calculateHalalConfidenceScore } from './halalRules.ts';
 
 export type RegionalStandardId =
   | 'MY_JAKIM'
@@ -519,9 +520,20 @@ export function applyRegionalCriteriaToEvaluation(
     strictnessAdjustments: adjustments,
   };
 
+  const updatedConfidenceBreakdown = calculateHalalConfidenceScore({
+    status: adjustedStatus,
+    isHalalCertified: baseEvaluation.isHalalCertified,
+    certificationAuthority: baseEvaluation.certificationAuthority,
+    criticalIngredients: updatedCritical,
+    allIngredients: updatedAll,
+    ingredientsText: product.ingredients_text,
+  });
+
   const updatedEvaluation: EvaluationData = {
     ...baseEvaluation,
     status: adjustedStatus,
+    confidenceScore: updatedConfidenceBreakdown.score,
+    confidenceBreakdown: updatedConfidenceBreakdown,
     summary: wasStatusAdjusted ? regionalSummary : baseEvaluation.summary,
     criticalIngredients: updatedCritical,
     allIngredients: updatedAll,

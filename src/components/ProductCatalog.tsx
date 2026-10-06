@@ -1,6 +1,47 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, RefreshCw, Sparkles, Filter, ExternalLink, Mic, MicOff, X, AlertCircle } from 'lucide-react';
+import { Search, RefreshCw, Sparkles, Filter, ExternalLink, Mic, MicOff, X, AlertCircle, Volume2, Globe } from 'lucide-react';
 import { SAMPLE_PRODUCTS } from '../data/halalRules.ts';
+
+const VOICE_LANGUAGES = [
+  { code: 'en-US', label: 'English (US/CA)' },
+  { code: 'en-GB', label: 'English (UK)' },
+  { code: 'ms-MY', label: 'Bahasa Melayu' },
+  { code: 'id-ID', label: 'Bahasa Indonesia' },
+  { code: 'ar-SA', label: 'العربية (Arabic)' },
+];
+
+/**
+ * Strips conversational voice prefixes/suffixes (e.g. "Is Nutella halal?", "Search for Haribo")
+ * so natural spoken queries match product names accurately.
+ */
+function parseSpokenProductQuery(rawTranscript: string): {
+  cleanedQuery: string;
+  filterCommand?: 'all' | 'halal' | 'mushbooh' | 'haram';
+  clearCommand?: boolean;
+} {
+  const lower = rawTranscript.toLowerCase().replace(/[?.!,]/g, '').trim();
+
+  if (lower === 'clear' || lower === 'clear search' || lower === 'reset' || lower === 'show all') {
+    return { cleanedQuery: '', filterCommand: 'all', clearCommand: true };
+  }
+  if (lower === 'filter halal' || lower === 'show halal' || lower === 'halal only') {
+    return { cleanedQuery: '', filterCommand: 'halal' };
+  }
+  if (lower === 'filter haram' || lower === 'show haram') {
+    return { cleanedQuery: '', filterCommand: 'haram' };
+  }
+  if (lower === 'filter mushbooh' || lower === 'show mushbooh' || lower === 'show doubtful') {
+    return { cleanedQuery: '', filterCommand: 'mushbooh' };
+  }
+
+  let cleaned = rawTranscript
+    .replace(/^[.,?!]+|[.,?!]+$/g, '')
+    .replace(/^(hey halalcheck|halalcheck|search for|look up|find|check if|check|is|are)\s+/i, '')
+    .replace(/\s+(is halal|halal or haram|halal|haram|permissible|certified)$/i, '')
+    .trim();
+
+  return { cleanedQuery: cleaned || rawTranscript.trim() };
+}
 
 interface ProductItem {
   barcode: string;
@@ -25,6 +66,14 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({ onSelectProduct 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isListening, setIsListening] = useState<boolean>(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [voiceLang, setVoiceLang] = useState<string>('en-US');
+  const [interimTranscript, setInterimTranscript] = useState<string>('');
+  const [lastVoiceConfidence, setLastVoiceConfidence] = useState<number | null>(null);
+  const [handsFreeContinuous, setHandsFreeContinuous] = useState<boolean>(false);
+
+  const isSpeechSupported =
+    typeof window !== 'undefined' &&
+    Boolean((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
 
   const recognitionRef = useRef<any>(null);
 
@@ -77,21 +126,51 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({ onSelectProduct 
 
       const recognition = new SpeechRecognition();
       recognitionRef.current = recognition;
-      recognition.continuous = false;
+      recognition.continuous = handsFreeContinuous;
       recognition.interimResults = true;
-      recognition.lang = navigator.language || 'en-US';
+      recognition.maxAlternatives = 1;
+      recognition.lang = voiceLang || navigator.language || 'en-US';
 
       recognition.onstart = () => {
         setIsListening(true);
+        setInterimTranscript('');
       };
 
       recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((result: any) => result[0].transcript)
-          .join('');
-        const clean = transcript.replace(/\.$/, '').trim();
-        if (clean) {
-          setSearchTerm(clean);
+        let finalTranscript = '';
+        let currentInterim = '';
+        let bestConfidence: number | null = null;
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            finalTranscript += res[0].transcript;
+            if (typeof res[0].confidence === 'number' && res[0].confidence > 0) {
+              bestConfidence = Math.round(res[0].confidence * 100);
+            }
+          } else {
+            currentInterim += res[0].transcript;
+          }
+        }
+
+        if (currentInterim) {
+          setInterimTranscript(currentInterim);
+        }
+
+        const rawText = (finalTranscript || currentInterim).trim();
+        if (rawText) {
+          const parsed = parseSpokenProductQuery(rawText);
+          if (parsed.clearCommand) {
+            setSearchTerm('');
+            setFilterStatus('all');
+          } else if (parsed.filterCommand) {
+            setFilterStatus(parsed.filterCommand);
+          } else if (parsed.cleanedQuery) {
+            setSearchTerm(parsed.cleanedQuery);
+          }
+          if (bestConfidence !== null) {
+            setLastVoiceConfidence(bestConfidence);
+          }
         }
       };
 
@@ -99,14 +178,16 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({ onSelectProduct 
         console.warn('Speech recognition error:', event.error);
         if (event.error === 'not-allowed') {
           setSpeechError('Microphone permission was denied. Please allow microphone access in your browser.');
-        } else if (event.error !== 'no-speech') {
+        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
           setSpeechError(`Voice input error: ${event.error}`);
         }
         setIsListening(false);
+        setInterimTranscript('');
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        setInterimTranscript('');
       };
 
       recognition.start();
@@ -153,70 +234,155 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({ onSelectProduct 
     <div className="bg-white dark:bg-stone-900 rounded-2xl border border-stone-200 dark:border-stone-800 overflow-hidden shadow-sm">
       {/* Search Header */}
       <div className="p-5 border-b border-stone-100 dark:border-stone-800">
-        <h2 className="text-lg font-bold text-stone-900 dark:text-white font-display">
-          Search Food Products & Barcodes
-        </h2>
-        <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
-          Find global foods, snacks, cereals, and beverages by name, brand, or voice to verify Halal status.
-        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-stone-900 dark:text-white font-display">
+              Search Food Products & Hands-Free Voice Lookup
+            </h2>
+            <p className="text-xs text-stone-500 dark:text-stone-400 mt-0.5">
+              Speak or type any food name, brand, or natural question (e.g., &ldquo;Is Nutella Halal?&rdquo;) while shopping.
+            </p>
+          </div>
 
-        {/* Search Input with Voice Button */}
-        <div className="mt-4 relative">
-          <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder={
-              isListening
-                ? 'Listening... Speak food name now'
-                : 'Search by product name (e.g. Haribo, Doritos, Oreo, Nutella...)'
-            }
-            className={`w-full h-11 pl-10 pr-24 text-xs sm:text-sm bg-stone-50 dark:bg-stone-800 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-700 text-stone-900 dark:text-white placeholder:text-stone-400 dark:placeholder:text-stone-500 transition-all ${
-              isListening
-                ? 'border-rose-300 dark:border-rose-700 ring-2 ring-rose-200 dark:ring-rose-900/60 bg-rose-50/20 dark:bg-rose-950/20'
-                : 'border-stone-200 dark:border-stone-700'
-            }`}
-          />
-
-          {/* Action triggers inside input */}
-          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {isLoading && (
-              <RefreshCw className="w-4 h-4 text-emerald-700 dark:text-emerald-400 animate-spin mr-1" />
-            )}
-
-            {searchTerm && !isLoading && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded-lg hover:bg-stone-200/50 dark:hover:bg-stone-700 transition-colors cursor-pointer"
-                title="Clear search text"
+          {/* Voice Language & Hands-Free Controls */}
+          <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+            <div className="flex items-center gap-1.5 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl px-2.5 py-1.5">
+              <Globe className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <select
+                aria-label="Voice search recognition language"
+                value={voiceLang}
+                onChange={(e) => setVoiceLang(e.target.value)}
+                className="text-xs font-semibold bg-transparent text-stone-700 dark:text-stone-200 focus:outline-none cursor-pointer"
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
+                {VOICE_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code} className="bg-white dark:bg-stone-900">
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-            {/* Voice-to-Text Button */}
             <button
               type="button"
-              onClick={isListening ? stopVoiceSearch : startVoiceSearch}
-              className={`p-2 rounded-lg text-xs font-medium transition-all flex items-center gap-1 cursor-pointer active:scale-90 ${
-                isListening
-                  ? 'bg-rose-600 text-white animate-pulse shadow-md shadow-rose-600/20'
-                  : 'text-stone-500 dark:text-stone-400 hover:text-emerald-700 dark:hover:text-emerald-400 hover:bg-stone-200/60 dark:hover:bg-stone-700'
+              onClick={() => setHandsFreeContinuous((prev) => !prev)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors cursor-pointer ${
+                handsFreeContinuous
+                  ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                  : 'bg-stone-50 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-400'
               }`}
-              title={isListening ? 'Stop voice recognition' : 'Speak to search food products'}
+              title="Keep microphone active for continuous back-to-back product searches while in the grocery aisle"
             >
-              {isListening ? (
-                <>
-                  <MicOff className="w-4 h-4" />
-                  <span className="text-[11px] font-bold hidden sm:inline">Listening</span>
-                </>
-              ) : (
-                <Mic className="w-4 h-4" />
-              )}
+              {handsFreeContinuous ? 'Hands-Free: ON' : 'Hands-Free: Single'}
             </button>
           </div>
+        </div>
+
+        {/* Search Input with Voice Button */}
+        <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder={
+                isListening
+                  ? interimTranscript
+                    ? `Hearing: "${interimTranscript}"...`
+                    : 'Listening... Speak product name or say "Is Oreo Halal?"'
+                  : 'Search by product name or tap Voice Search (e.g. Haribo, Doritos, Oreo, Nutella...)'
+              }
+              className={`w-full h-11 pl-10 pr-12 text-xs sm:text-sm bg-stone-50 dark:bg-stone-800 border rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-700 text-stone-900 dark:text-white placeholder:text-stone-400 dark:placeholder:text-stone-500 transition-all ${
+                isListening
+                  ? 'border-rose-400 dark:border-rose-600 ring-2 ring-rose-200 dark:ring-rose-900/60 bg-rose-50/20 dark:bg-rose-950/20'
+                  : 'border-stone-200 dark:border-stone-700'
+              }`}
+            />
+
+            {/* Clear & Loading triggers inside input */}
+            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {isLoading && (
+                <RefreshCw className="w-4 h-4 text-emerald-700 dark:text-emerald-400 animate-spin mr-1" />
+              )}
+
+              {searchTerm && !isLoading && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setLastVoiceConfidence(null);
+                  }}
+                  className="p-1.5 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded-lg hover:bg-stone-200/50 dark:hover:bg-stone-700 transition-colors cursor-pointer"
+                  title="Clear search text"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Prominent Hands-Free Voice-to-Text Search Button */}
+          <button
+            type="button"
+            onClick={isListening ? stopVoiceSearch : startVoiceSearch}
+            className={`h-11 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 shrink-0 ${
+              isListening
+                ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse shadow-md shadow-rose-600/20'
+                : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs'
+            }`}
+            title={
+              isListening
+                ? 'Stop voice recognition'
+                : isSpeechSupported
+                ? 'Start hands-free voice-to-text product search'
+                : 'SpeechRecognition API requires Chrome, Edge, or Safari'
+            }
+          >
+            {isListening ? (
+              <>
+                <MicOff className="w-4 h-4" />
+                <span>Stop Listening</span>
+              </>
+            ) : (
+              <>
+                <Mic className="w-4 h-4" />
+                <span>Voice Search</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Quick Voice Command Chips */}
+        <div className="mt-2.5 flex items-center gap-1.5 flex-wrap text-[11px]">
+          <span className="text-stone-400 dark:text-stone-500 font-medium flex items-center gap-1">
+            <Volume2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+            <span>Try saying:</span>
+          </span>
+          {['"Is Nutella Halal?"', '"Check Haribo"', '"Find Doritos"', '"Show Halal"'].map(
+            (phrase) => (
+              <button
+                key={phrase}
+                type="button"
+                onClick={() => {
+                  const raw = phrase.replace(/"/g, '');
+                  const parsed = parseSpokenProductQuery(raw);
+                  if (parsed.filterCommand) {
+                    setFilterStatus(parsed.filterCommand);
+                  } else {
+                    setSearchTerm(parsed.cleanedQuery);
+                  }
+                }}
+                className="px-2 py-0.5 rounded-md bg-stone-100 dark:bg-stone-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 text-stone-600 dark:text-stone-300 hover:text-emerald-700 dark:hover:text-emerald-300 border border-stone-200/80 dark:border-stone-700 transition-colors cursor-pointer"
+              >
+                {phrase}
+              </button>
+            )
+          )}
+          {lastVoiceConfidence !== null && searchTerm && (
+            <span className="ml-auto text-[11px] font-mono-numbers text-emerald-700 dark:text-emerald-400 font-semibold">
+              Voice Match: &ldquo;{searchTerm}&rdquo; ({lastVoiceConfidence}% confidence)
+            </span>
+          )}
         </div>
 
         {/* Live Voice Indicator Bar */}
