@@ -8,6 +8,11 @@ import { AdditivesGuide } from './components/AdditivesGuide.tsx';
 import { ScanHistory, HistoryItem } from './components/ScanHistory.tsx';
 import { FavoritesList, FavoriteItem } from './components/FavoritesList.tsx';
 import { ShoppingList, ShoppingListItem } from './components/ShoppingList.tsx';
+import { PantryTracker } from './components/PantryTracker.tsx';
+import { AddToPantryModal } from './components/AddToPantryModal.tsx';
+import { HalalMaps } from './components/HalalMaps.tsx';
+import { PantryItem, calculateDaysRemaining } from './types/pantry.ts';
+import { generateSamplePantryItems } from './utils/pantrySamples.ts';
 import { DietaryGuideModal } from './components/DietaryGuideModal.tsx';
 import { UpgradeModal } from './components/UpgradeModal.tsx';
 import { RegionalStandardBar } from './components/RegionalStandardBar.tsx';
@@ -52,6 +57,8 @@ import {
   Search,
   Heart,
   BellRing,
+  Package,
+  MapPin,
 } from 'lucide-react';
 
 export default function App() {
@@ -174,6 +181,27 @@ export default function App() {
       return [];
     }
   });
+
+  const [pantry, setPantry] = useState<PantryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('halalcheck_pantry');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [pendingPantryModalItem, setPendingPantryModalItem] = useState<{
+    product: ProductData;
+    evaluation: EvaluationData;
+  } | null>(null);
+
+  const pantryExpiringCount = React.useMemo(() => {
+    return pantry.filter((item) => {
+      const days = calculateDaysRemaining(item.expirationDate);
+      return days <= 3;
+    }).length;
+  }, [pantry]);
 
   // Track online/offline status and seed initial IndexedDB cache on mount
   useEffect(() => {
@@ -390,6 +418,55 @@ export default function App() {
       )
     );
     setInfoToast('Purified Shopping List: Removed all Haram and Mushbooh items.');
+  };
+
+  // Save pantry on changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('halalcheck_pantry', JSON.stringify(pantry.slice(0, 200)));
+    } catch (e) {
+      console.warn('LocalStorage error:', e);
+    }
+  }, [pantry]);
+
+  const handleAddToPantry = (item: PantryItem) => {
+    setPantry((prev) => {
+      const existingIndex = prev.findIndex((i) => i.id === item.id);
+      if (existingIndex >= 0) {
+        const copy = [...prev];
+        copy[existingIndex] = item;
+        return copy;
+      }
+      return [item, ...prev];
+    });
+    setInfoToast(
+      `Logged "${item.product.product_name}" into your Pantry (${item.storageLocation}, use-by: ${item.expirationDate}).`
+    );
+  };
+
+  const handleUpdatePantryItem = (item: PantryItem) => {
+    setPantry((prev) => prev.map((i) => (i.id === item.id ? item : i)));
+  };
+
+  const handleRemovePantryItem = (id: string) => {
+    setPantry((prev) => prev.filter((i) => i.id !== id));
+  };
+
+  const handleClearPantry = () => {
+    setPantry([]);
+    localStorage.removeItem('halalcheck_pantry');
+  };
+
+  const handlePopulateSamplePantry = () => {
+    const samples = generateSamplePantryItems();
+    setPantry(samples);
+    setInfoToast(
+      'Loaded 6 sample Halal pantry items (including urgent fresh poultry and halal-critical dairy).'
+    );
+  };
+
+  const handleOpenPantryModal = (product: ProductData, evaluation: EvaluationData) => {
+    setPendingPantryModalItem({ product, evaluation });
   };
 
   const handleSelectFavorite = async (item: FavoriteItem) => {
@@ -773,6 +850,8 @@ export default function App() {
         }}
         favoritesCount={favorites.length}
         shoppingListCount={shoppingList.length}
+        pantryCount={pantry.length}
+        pantryExpiringCount={pantryExpiringCount}
         dailyScanInfo={dailyScanInfo}
         onOpenUpgradeModal={() => setIsUpgradeModalOpen(true)}
         isOnline={isOnline}
@@ -883,6 +962,8 @@ export default function App() {
                 onToggleShoppingList={() =>
                   handleToggleShoppingList(scannedProduct, activeRegionalResult.evaluation)
                 }
+                isInPantry={pantry.some((item) => item.product.code === scannedProduct.code)}
+                onAddToPantry={(item) => handleAddToPantry(item)}
                 isOfflineCached={isReportFromCache}
                 cachedAt={cachedReportTime}
                 onSelectAlternative={(barcode) => handleBarcodeDetected(barcode)}
@@ -1022,6 +1103,7 @@ export default function App() {
             onClearHistory={handleClearHistory}
             onPopulateSampleHistory={(samples) => setHistory(samples)}
             cachedReportsCount={cachedReportsCount}
+            onAddToPantry={(histItem) => handleOpenPantryModal(histItem.product, histItem.evaluation)}
           />
         )}
 
@@ -1036,6 +1118,7 @@ export default function App() {
               setActiveTab('scanner');
               handleResetScanner();
             }}
+            onAddToPantry={(favItem) => handleOpenPantryModal(favItem.product, favItem.evaluation)}
           />
         )}
 
@@ -1060,7 +1143,44 @@ export default function App() {
             }}
           />
         )}
+
+        {/* TAB 8: DIGITAL PANTRY & FRESHNESS TRACKER */}
+        {activeTab === 'pantry' && (
+          <PantryTracker
+            pantry={pantry}
+            history={history}
+            favorites={favorites}
+            onUpdatePantryItem={handleUpdatePantryItem}
+            onRemovePantryItem={handleRemovePantryItem}
+            onAddPantryItem={handleAddToPantry}
+            onClearPantry={handleClearPantry}
+            onSelectProduct={(prod, ev) => {
+              setScannedProduct(prod);
+              setEvaluation(ev);
+              setActiveTab('scanner');
+            }}
+            onAddToShoppingList={(prod, ev) => handleToggleShoppingList(prod, ev)}
+            onPopulateSamplePantry={handlePopulateSamplePantry}
+          />
+        )}
+
+        {/* TAB 9: HALAL MAPS & LOCAL PLACES DIRECTORY */}
+        {activeTab === 'maps' && <HalalMaps />}
       </main>
+
+      {/* Global Add-To-Pantry Modal (triggered from History or Favorites) */}
+      {pendingPantryModalItem && (
+        <AddToPantryModal
+          isOpen={!!pendingPantryModalItem}
+          onClose={() => setPendingPantryModalItem(null)}
+          product={pendingPantryModalItem.product}
+          evaluation={pendingPantryModalItem.evaluation}
+          onConfirmAdd={(item) => {
+            handleAddToPantry(item);
+            setPendingPantryModalItem(null);
+          }}
+        />
+      )}
 
       {/* Dietary Guidelines Modal */}
       <DietaryGuideModal
@@ -1105,8 +1225,8 @@ export default function App() {
       />
 
       {/* Mobile Ergonomic Bottom Tab Bar (Touch Zone compliant) */}
-      <div className="md:hidden sticky bottom-0 z-40 bg-white/95 dark:bg-stone-900/95 backdrop-blur-md border-t border-stone-200 dark:border-stone-800 px-2 py-1 shadow-lg">
-        <div className="grid grid-cols-6 items-center">
+      <div className="md:hidden sticky bottom-0 z-40 bg-white/95 dark:bg-stone-900/95 backdrop-blur-md border-t border-stone-200 dark:border-stone-800 px-0.5 py-1 shadow-lg">
+        <div className="grid grid-cols-8 items-center">
           <button
             onClick={() => {
               setActiveTab('scanner');
@@ -1144,6 +1264,41 @@ export default function App() {
           >
             <Search className="w-4 h-4" />
             <span className="text-[9px] mt-0.5">Search</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('maps')}
+            className={`min-h-[48px] flex flex-col items-center justify-center cursor-pointer transition-colors ${
+              activeTab === 'maps'
+                ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                : 'text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200'
+            }`}
+          >
+            <MapPin className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5">Maps</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('pantry')}
+            className={`min-h-[48px] flex flex-col items-center justify-center cursor-pointer transition-colors relative ${
+              activeTab === 'pantry'
+                ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                : 'text-stone-500 dark:text-stone-400 hover:text-stone-900 dark:hover:text-stone-200'
+            }`}
+          >
+            <div className="relative">
+              <Package className="w-4 h-4" />
+              {pantryExpiringCount > 0 ? (
+                <span className="absolute -top-1 -right-2 text-[8px] font-bold px-1 rounded-full bg-amber-500 text-white leading-tight animate-pulse">
+                  {pantryExpiringCount}
+                </span>
+              ) : pantry.length > 0 ? (
+                <span className="absolute -top-1 -right-2 text-[8px] font-bold px-1 rounded-full bg-emerald-600 text-white leading-tight">
+                  {pantry.length}
+                </span>
+              ) : null}
+            </div>
+            <span className="text-[9px] mt-0.5">Pantry</span>
           </button>
 
           <button

@@ -1,0 +1,201 @@
+import { PantryItem, addDaysToDate, formatDateToIso } from '../types/pantry.ts';
+
+export function generateSamplePantryItems(): PantryItem[] {
+  const today = new Date();
+  const todayStr = formatDateToIso(today);
+
+  return [
+    {
+      id: 'sample_chicken_breast_1',
+      product: {
+        code: '0712345678901',
+        product_name: 'Fresh Halal Chicken Breast Fillets',
+        brands: 'Al-Safa Halal Farms',
+        ingredients_text: 'Fresh chicken breast fillet 100% (Halal hand-slaughtered Zabiha).',
+        image_url: 'https://images.openfoodfacts.org/images/products/325/039/000/1234/front_en.4.400.jpg',
+        categories: 'Meats, Poultry, Fresh chicken, Halal meats',
+      },
+      evaluation: {
+        status: 'HALAL_CERTIFIED',
+        confidence: 'HIGH',
+        summary: '100% Hand-slaughtered Zabiha chicken certified by Islamic Services of America (ISA).',
+        isHalalCertified: true,
+        certificationAuthority: 'Islamic Services of America (ISA)',
+        criticalIngredients: [],
+        allIngredients: [{ name: 'Chicken breast fillet', status: 'HALAL' }],
+        recommendations: ['Keep refrigerated under 4°C', 'Consume before use-by deadline'],
+      },
+      quantity: 2,
+      unit: 'pack',
+      storageLocation: 'Fridge',
+      dateAdded: addDaysToDate(today, -3),
+      expirationDate: addDaysToDate(today, 2), // Expires in 2 days (urgent!)
+      isHalalCritical: true,
+      criticalReason:
+        'Fresh poultry: Islamic Tayyib standard requires swift consumption or freezing to prevent spoilage.',
+      notes: 'Bought at Halal Butcher counter. Top shelf of fridge.',
+    },
+    {
+      id: 'sample_yogurt_2',
+      product: {
+        code: '3033490004521',
+        product_name: 'Greek Style Whole Milk Plain Yogurt',
+        brands: 'Danone / Oikos',
+        ingredients_text: 'Whole milk, live active yogurt cultures (L. bulgaricus, S. thermophilus).',
+        image_url: 'https://images.openfoodfacts.org/images/products/303/349/000/4521/front_en.12.400.jpg',
+        categories: 'Dairies, Fermented foods, Yogurts, Greek-style yogurts',
+      },
+      evaluation: {
+        status: 'HALAL',
+        confidence: 'HIGH',
+        summary: 'All dairy and microbial cultures are verified 100% Halal with zero animal rennet.',
+        isHalalCertified: false,
+        criticalIngredients: [],
+        allIngredients: [
+          { name: 'Whole milk', status: 'HALAL' },
+          { name: 'Live active cultures', status: 'HALAL' },
+        ],
+        recommendations: ['Refrigerate after opening', 'Consume within 5 days of opening'],
+      },
+      quantity: 1,
+      unit: 'tub',
+      storageLocation: 'Fridge',
+      dateAdded: addDaysToDate(today, -5),
+      expirationDate: addDaysToDate(today, 3), // Expires in 3 days!
+      isHalalCritical: true,
+      criticalReason:
+        'Perishable dairy: Avoid Israf (waste) by incorporating into today’s breakfast or smoothies.',
+      notes: 'Opened 2 days ago',
+    },
+    {
+      id: 'sample_haribo_3',
+      product: {
+        code: '4001686301524',
+        product_name: 'Haribo Goldbären (European Formula)',
+        brands: 'Haribo',
+        ingredients_text: 'Glucose syrup, sugar, gelatine (pork), dextrose, fruit juice from concentrate, citric acid.',
+        image_url: 'https://images.openfoodfacts.org/images/products/400/168/630/1524/front_en.28.400.jpg',
+        categories: 'Snacks, Sweet snacks, Confectioneries, Candies, Gelatin gummies',
+      },
+      evaluation: {
+        status: 'HARAM',
+        confidence: 'HIGH',
+        summary: 'Strictly Haram due to confirmed porcine (pig-derived) E441 gelatin in European formula.',
+        isHalalCertified: false,
+        criticalIngredients: [
+          {
+            name: 'Gelatine (porcine)',
+            status: 'HARAM',
+            reason: 'Porcine (pig) derived gelatin strictly prohibited in Islam (Surah Al-Baqarah 2:173)',
+            source: 'OFF ingredient list',
+          },
+        ],
+        allIngredients: [
+          { name: 'Sugar', status: 'HALAL' },
+          { name: 'Gelatine (pork)', status: 'HARAM' },
+        ],
+        recommendations: ['Do not consume', 'Segregate from Halal pantry items'],
+      },
+      quantity: 1,
+      unit: 'pack',
+      storageLocation: 'Pantry',
+      dateAdded: addDaysToDate(today, -10),
+      expirationDate: addDaysToDate(today, 120),
+      isHalalCritical: true,
+      criticalReason:
+        'Flagged as Haram (pig gelatin): Keep strictly segregated or dispose of to avoid accidental consumption.',
+      notes: 'Given as part of a gift basket — keep separated!',
+    },
+    {
+      id: 'sample_beef_mince_4',
+      product: {
+        code: '0854321009876',
+        product_name: 'Zabiha Halal Extra Lean Ground Beef',
+        brands: 'Crescent Foods',
+        ingredients_text: '100% Pure Halal beef (Hand slaughtered, vegetarian grain fed).',
+        image_url: 'https://images.openfoodfacts.org/images/products/085/432/100/9876/front_en.3.400.jpg',
+        categories: 'Meats, Fresh beef, Ground meat, Halal meats',
+      },
+      evaluation: {
+        status: 'HALAL_CERTIFIED',
+        confidence: 'HIGH',
+        summary: 'Certified Halal by Shariah Board of America. Antibiotic-free, hand slaughtered.',
+        isHalalCertified: true,
+        certificationAuthority: 'Shariah Board of America',
+        criticalIngredients: [],
+        allIngredients: [{ name: 'Halal Beef', status: 'HALAL' }],
+        recommendations: ['Keep frozen at -18°C'],
+      },
+      quantity: 3,
+      unit: 'pack',
+      storageLocation: 'Freezer',
+      dateAdded: addDaysToDate(today, -14),
+      expirationDate: addDaysToDate(today, 75),
+      isHalalCritical: true,
+      criticalReason:
+        'Certified Halal beef in freezer storage: Safe long-term shelf-life.',
+      notes: 'Drawer 2 of freezer',
+    },
+    {
+      id: 'sample_pasta_5',
+      product: {
+        code: '8076809513753',
+        product_name: 'Penne Rigate Italian Durum Wheat Pasta',
+        brands: 'Barilla',
+        ingredients_text: 'Durum wheat semolina, water.',
+        image_url: 'https://images.openfoodfacts.org/images/products/807/680/951/3753/front_en.9.400.jpg',
+        categories: 'Plant-based foods, Cereals and potatoes, Pastas, Dry pasta',
+      },
+      evaluation: {
+        status: 'HALAL',
+        confidence: 'HIGH',
+        summary: '100% Plant-based durum wheat semolina with no animal fats or enzymes.',
+        isHalalCertified: false,
+        criticalIngredients: [],
+        allIngredients: [
+          { name: 'Durum wheat semolina', status: 'HALAL' },
+          { name: 'Water', status: 'HALAL' },
+        ],
+        recommendations: ['Store in a cool dry place'],
+      },
+      quantity: 4,
+      unit: 'box',
+      storageLocation: 'Pantry',
+      dateAdded: addDaysToDate(today, -20),
+      expirationDate: addDaysToDate(today, 320),
+      isHalalCritical: false,
+      notes: 'Pantry shelf 3',
+    },
+    {
+      id: 'sample_ketchup_6',
+      product: {
+        code: '0013000006034',
+        product_name: 'Tomato Ketchup',
+        brands: 'Heinz',
+        ingredients_text: 'Tomato concentrate from red ripe tomatoes, distilled vinegar, high fructose corn syrup, corn syrup, salt, spice, onion powder, natural flavoring.',
+        image_url: 'https://images.openfoodfacts.org/images/products/001/300/000/6034/front_en.16.400.jpg',
+        categories: 'Condiments, Sauces, Tomato sauces, Ketchups',
+      },
+      evaluation: {
+        status: 'HALAL',
+        confidence: 'HIGH',
+        summary: 'Vinegar is synthetic/distilled and free of intoxicating alcohol residue. Certified Kosher and Halal compliant.',
+        isHalalCertified: false,
+        criticalIngredients: [],
+        allIngredients: [
+          { name: 'Tomato concentrate', status: 'HALAL' },
+          { name: 'Distilled vinegar', status: 'HALAL' },
+          { name: 'Natural flavoring', status: 'HALAL' },
+        ],
+        recommendations: ['Refrigerate after opening'],
+      },
+      quantity: 1,
+      unit: 'bottle',
+      storageLocation: 'Fridge',
+      dateAdded: addDaysToDate(today, -15),
+      expirationDate: addDaysToDate(today, 45),
+      isHalalCritical: false,
+      notes: 'Fridge door rack',
+    },
+  ];
+}

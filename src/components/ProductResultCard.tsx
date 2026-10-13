@@ -31,13 +31,20 @@ import {
   Printer,
   Download,
   Languages,
-  ArrowRight
+  ArrowRight,
+  Camera,
+  Image as ImageIcon,
+  Package
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
 import { NutritionHealthChart } from './NutritionHealthChart.tsx';
+import { HealthConsciousNutritionalBarChart } from './HealthConsciousNutritionalBarChart.tsx';
 import { NutritionalAnalysisTable } from './NutritionalAnalysisTable.tsx';
 import { MarketComparison } from './MarketComparison.tsx';
+import { ShareableImageGenerator } from './ShareableImageGenerator.tsx';
+import { AddToPantryModal } from './AddToPantryModal.tsx';
+import { PantryItem } from '../types/pantry.ts';
 import {
   RegionalAssessmentResult,
   RegionalStandardId,
@@ -47,6 +54,7 @@ import {
   calculateHalalConfidenceScore,
   HalalConfidenceBreakdown,
 } from '../data/halalRules.ts';
+import { HalalScoreCircularIndicator } from './HalalScoreCircularIndicator.tsx';
 
 export interface ProductData {
   code: string;
@@ -98,6 +106,8 @@ interface ProductResultCardProps {
   onToggleFavorite?: () => void;
   isInShoppingList?: boolean;
   onToggleShoppingList?: () => void;
+  isInPantry?: boolean;
+  onAddToPantry?: (item: PantryItem) => void;
   isOfflineCached?: boolean;
   cachedAt?: string | number;
   onSelectAlternative?: (barcode: string) => void;
@@ -115,6 +125,8 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   onToggleFavorite,
   isInShoppingList = false,
   onToggleShoppingList,
+  isInPantry = false,
+  onAddToPantry,
   isOfflineCached = false,
   cachedAt,
   onSelectAlternative,
@@ -128,6 +140,8 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   const [localSaved, setLocalSaved] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState<boolean>(false);
+  const [isSocialImageModalOpen, setIsSocialImageModalOpen] = useState<boolean>(false);
+  const [isPantryModalOpen, setIsPantryModalOpen] = useState<boolean>(false);
   const [qrEncodingMode, setQrEncodingMode] = useState<'url' | 'payload'>('url');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrBadgePngUrl, setQrBadgePngUrl] = useState<string>('');
@@ -458,7 +472,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
       `🏷️ Brand: ${product.brands || 'Unspecified Brand'}`,
       `🔢 Barcode / UPC: ${product.code}`,
       `⚖️ Final Verdict: ${statusTitle}`,
-      `🛡️ Halal Confidence Score: ${confidenceBreakdown.score}% (${confidenceBreakdown.tierLabel})`,
+      `🛡️ Halal Score: ${confidenceBreakdown.score}/100 (${confidenceBreakdown.tierLabel})`,
       ...(regionalAssessment
         ? [
             `🌍 Regional Standard: ${regionalAssessment.flag} ${regionalAssessment.authorityShort} (${regionalAssessment.standardCode})`,
@@ -568,15 +582,15 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
       product.brands || 'Brand'
     }) — Verdict: ${evaluation.status} (${
       confidenceBreakdown.score
-    }% Halal Confidence)${regionTag}. ${evaluation.summary} 🔗 ${deepLink}`;
+    }/100 Halal Score)${regionTag}. ${evaluation.summary} 🔗 ${deepLink}`;
   };
 
   const handleShare = async () => {
     const deepLink = getProductDeepLink();
     const shareText = generateShareSummary();
     const shareData: ShareData = {
-      title: `HalalCheck: ${product.product_name} — ${evaluation.status} (${confidenceBreakdown.score}% Confidence)`,
-      text: `${product.product_name} (${product.brands || 'Brand'}) is rated ${evaluation.status} (${confidenceBreakdown.score}% Halal Confidence) on HalalCheck. ${evaluation.summary}`,
+      title: `HalalCheck: ${product.product_name} — ${evaluation.status} (${confidenceBreakdown.score}/100 Halal Score)`,
+      text: `${product.product_name} (${product.brands || 'Brand'}) is rated ${evaluation.status} (${confidenceBreakdown.score}/100 Halal Score) on HalalCheck. ${evaluation.summary}`,
       url: deepLink,
     };
 
@@ -701,7 +715,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
         ctx.fillText(verdictLabel, 380, 88);
 
         ctx.font = 'bold 16px JetBrains Mono, monospace';
-        ctx.fillText(`Halal Confidence Score: ${confidenceBreakdown.score}%`, 380, 120);
+        ctx.fillText(`Halal Score: ${confidenceBreakdown.score}/100`, 380, 120);
 
         // White QR Card Frame
         ctx.fillStyle = '#ffffff';
@@ -862,13 +876,14 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
       {/* 1. Primary Verdict Banner */}
       <div className={`p-5 sm:p-6 border-b ${statusConfig.headerBg}`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div
-              className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shrink-0 shadow-sm transition-all duration-500 delay-75 ease-out transform ${statusConfig.bg} ${
-                isEntered ? 'opacity-100 scale-100' : 'opacity-0 scale-75'
-              }`}
-            >
-              <StatusIcon className="w-6 h-6" />
+          <div className="flex items-start sm:items-center gap-3.5 sm:gap-4">
+            <div className="shrink-0 transition-all duration-500 delay-75 ease-out transform">
+              <HalalScoreCircularIndicator
+                score={confidenceBreakdown.score}
+                status={evaluation.status}
+                size="md"
+                animated={isEntered}
+              />
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -890,7 +905,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                   }`}
                 >
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Halal Confidence: {confidenceBreakdown.score}%</span>
+                  <span>Halal Score: {confidenceBreakdown.score}/100</span>
                 </span>
               </div>
               <h2 className="text-xl sm:text-2xl font-bold tracking-tight font-display text-stone-900 dark:text-white mt-0.5">
@@ -953,6 +968,22 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
               <span>QR Code</span>
             </button>
 
+            {/* Shareable Social Media Image Generator Button */}
+            <button
+              onClick={() => setIsSocialImageModalOpen(true)}
+              className={`px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-semibold border rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                evaluation.status === 'HARAM'
+                  ? 'border-rose-200 dark:border-rose-800 bg-rose-50/90 dark:bg-rose-950/60 hover:bg-rose-100 dark:hover:bg-rose-900/70 text-rose-800 dark:text-rose-300'
+                  : evaluation.status === 'MUSHBOOH'
+                  ? 'border-amber-200 dark:border-amber-800 bg-amber-50/90 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/70 text-amber-800 dark:text-amber-300'
+                  : 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/90 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/70 text-emerald-800 dark:text-emerald-300'
+              }`}
+              title="Create a clean, social-media-ready image overlaying the Halal/Haram status to share or warn the community"
+            >
+              <Camera className="w-4 h-4 shrink-0" />
+              <span>Share Image</span>
+            </button>
+
             {/* Quick Text Summary Preview / Copy Modal Trigger */}
             <button
               onClick={() => setIsShareModalOpen(true)}
@@ -997,6 +1028,27 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                 />
                 <span className="hidden sm:inline">
                   {isInShoppingList ? 'In Shopping List' : 'Add to List'}
+                </span>
+              </button>
+            )}
+
+            {onAddToPantry && (
+              <button
+                onClick={() => setIsPantryModalOpen(true)}
+                className={`p-2 sm:px-3 sm:py-2 text-xs font-medium border rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                  isInPantry
+                    ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold'
+                    : 'bg-white dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700'
+                }`}
+                title={isInPantry ? 'Logged in Pantry (Click to edit or add another)' : 'Log item into Digital Pantry & track expiration'}
+              >
+                <Package
+                  className={`w-4 h-4 ${
+                    isInPantry ? 'text-emerald-700 dark:text-emerald-400' : 'text-stone-500 dark:text-stone-400'
+                  }`}
+                />
+                <span className="hidden sm:inline">
+                  {isInPantry ? 'In Pantry' : 'Pantry'}
                 </span>
               </button>
             )}
@@ -1050,76 +1102,120 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
       )}
 
       {/* 2. Product Meta & Image Row */}
-      {/* Halal Confidence Score (0-100%) Breakdown Strip */}
-      <div className="px-5 sm:px-6 py-4 bg-white dark:bg-stone-900 border-b border-stone-100 dark:border-stone-800 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <ShieldCheck
-              className={`w-4 h-4 ${
-                confidenceBreakdown.score >= 80
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : confidenceBreakdown.score >= 25
-                  ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-rose-600 dark:text-rose-400'
-              }`}
+      {/* 2. Visual Halal Score & Quick Decision Section */}
+      <div className="px-5 sm:px-6 py-5 bg-gradient-to-r from-stone-50/90 via-white to-stone-50/60 dark:from-stone-900 dark:via-stone-900 dark:to-stone-900/60 border-b border-stone-100 dark:border-stone-800 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+          {/* Circular Progress Gauge & Decision Pill */}
+          <div className="flex items-center gap-4 sm:gap-5 shrink-0">
+            <HalalScoreCircularIndicator
+              score={confidenceBreakdown.score}
+              status={evaluation.status}
+              size="lg"
+              showLabel={true}
+              showDecisionPill={true}
+              showDecisionDescription={false}
+              animated={isEntered}
             />
-            <span className="text-xs font-bold uppercase tracking-wider text-stone-800 dark:text-stone-200">
-              Halal Confidence Score:
-            </span>
-            <span
-              className={`text-sm font-bold font-mono-numbers ${
-                confidenceBreakdown.score >= 80
-                  ? 'text-emerald-700 dark:text-emerald-400'
+
+            <div className="space-y-1.5 max-w-sm sm:max-w-md">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                  Quick Decision Rating
+                </span>
+                <span className="text-stone-300 dark:text-stone-700">·</span>
+                <span className="text-xs font-medium text-stone-600 dark:text-stone-300 font-mono-numbers">
+                  {confidenceBreakdown.score}/100 Score
+                </span>
+              </div>
+
+              <h4 className="text-base sm:text-lg font-bold text-stone-900 dark:text-white leading-tight">
+                {confidenceBreakdown.score >= 85
+                  ? 'Safe to Consume — High Halal Certainty'
+                  : confidenceBreakdown.score >= 65
+                  ? 'Permissible Formulation'
                   : confidenceBreakdown.score >= 25
-                  ? 'text-amber-700 dark:text-amber-400'
-                  : 'text-rose-700 dark:text-rose-400'
-              }`}
-            >
-              {confidenceBreakdown.score}%
-            </span>
-            <span className="text-xs text-stone-500 dark:text-stone-400">
-              — {confidenceBreakdown.tierLabel}
-            </span>
+                  ? 'Verify Additive Source (Mushbooh)'
+                  : 'Strictly Prohibited (Haram Detected)'}
+              </h4>
+
+              <p className="text-xs text-stone-600 dark:text-stone-300 leading-relaxed">
+                {confidenceBreakdown.score >= 85
+                  ? 'Certified Halal or pure permissible ingredients. 100% confidence for immediate consumption.'
+                  : confidenceBreakdown.score >= 65
+                  ? 'Formulated with clean plant/mineral ingredients without forbidden animal-derived risks.'
+                  : confidenceBreakdown.score >= 25
+                  ? 'Contains ambiguous emulsifiers or additives whose animal/plant origin requires clarification.'
+                  : 'Directly forbidden under Islamic jurisprudence due to confirmed pork, non-zabiha meat, or alcohol.'}
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 text-[11px] font-medium text-stone-600 dark:text-stone-400 flex-wrap">
-            <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-              {confidenceBreakdown.lowRiskCount} Low-Risk
-            </span>
-            <span>·</span>
-            <span className="text-amber-700 dark:text-amber-400 font-semibold">
-              {confidenceBreakdown.mediumRiskCount} Medium-Risk
-            </span>
-            <span>·</span>
-            <span className="text-rose-700 dark:text-rose-400 font-semibold">
-              {confidenceBreakdown.highRiskCount} High-Risk
-            </span>
-            <span>·</span>
-            <span>
-              {evaluation.isHalalCertified
-                ? `Cert Bonus: +${confidenceBreakdown.certificationBonus}%`
-                : 'Uncertified Label'}
-            </span>
-          </div>
-        </div>
+          {/* Risk Breakdown Metrics & Spectrum Scale */}
+          <div className="flex-1 lg:max-w-md space-y-3 bg-white dark:bg-stone-800/80 p-3.5 sm:p-4 rounded-xl border border-stone-200/80 dark:border-stone-700/80 shadow-xs">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-stone-800 dark:text-stone-200 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                Audited Risk Metrics
+              </span>
+              <span className="font-mono-numbers text-[11px] font-semibold text-stone-500 dark:text-stone-400">
+                {confidenceBreakdown.tierLabel}
+              </span>
+            </div>
 
-        {/* 0-100% Progress Bar */}
-        <div className="h-2.5 w-full rounded-full bg-stone-100 dark:bg-stone-800 overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              confidenceBreakdown.score >= 80
-                ? 'bg-emerald-600'
-                : confidenceBreakdown.score >= 25
-                ? 'bg-amber-500'
-                : 'bg-rose-600'
-            }`}
-            style={{ width: `${Math.max(3, confidenceBreakdown.score)}%` }}
-          />
+            {/* Risk counters bar */}
+            <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
+              <div className="bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/60 p-1.5 rounded-lg">
+                <div className="font-bold text-emerald-700 dark:text-emerald-400 font-mono-numbers text-sm">
+                  {confidenceBreakdown.lowRiskCount}
+                </div>
+                <div className="text-[10px] text-emerald-800 dark:text-emerald-300 font-medium">Safe/Clean</div>
+              </div>
+              <div className="bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800/60 p-1.5 rounded-lg">
+                <div className="font-bold text-amber-700 dark:text-amber-400 font-mono-numbers text-sm">
+                  {confidenceBreakdown.mediumRiskCount}
+                </div>
+                <div className="text-[10px] text-amber-800 dark:text-amber-300 font-medium">Mushbooh</div>
+              </div>
+              <div className="bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800/60 p-1.5 rounded-lg">
+                <div className="font-bold text-rose-700 dark:text-rose-400 font-mono-numbers text-sm">
+                  {confidenceBreakdown.highRiskCount}
+                </div>
+                <div className="text-[10px] text-rose-800 dark:text-rose-300 font-medium">Haram</div>
+              </div>
+              <div className="bg-stone-50 dark:bg-stone-900/60 border border-stone-200 dark:border-stone-700 p-1.5 rounded-lg">
+                <div className="font-bold text-stone-700 dark:text-stone-300 font-mono-numbers text-sm">
+                  {evaluation.isHalalCertified ? `+${confidenceBreakdown.certificationBonus}%` : '0%'}
+                </div>
+                <div className="text-[10px] text-stone-600 dark:text-stone-400 font-medium">
+                  {evaluation.isHalalCertified ? 'Certified' : 'Uncertified'}
+                </div>
+              </div>
+            </div>
+
+            {/* Spectrum scale bar with pointer */}
+            <div className="space-y-1">
+              <div className="h-2 w-full rounded-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-500 relative overflow-hidden">
+                <div
+                  className="absolute top-0 bottom-0 w-1.5 bg-stone-900 dark:bg-white shadow-xs rounded-full -translate-x-1/2 transition-all duration-700"
+                  style={{ left: `${Math.max(2, Math.min(98, confidenceBreakdown.score))}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] font-mono text-stone-400 dark:text-stone-500 px-0.5">
+                <span>0 Haram</span>
+                <span>50 Doubtful</span>
+                <span>100 Halal</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Scoring Factor Pills */}
         {confidenceBreakdown.factors.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+          <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-stone-100 dark:border-stone-800/80">
+            <span className="text-[11px] font-bold text-stone-500 dark:text-stone-400 mr-1 flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-500" />
+              Score Factors:
+            </span>
             {confidenceBreakdown.factors.map((f, idx) => (
               <div
                 key={idx}
@@ -1669,6 +1765,40 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
             <span>Nutritional values are not available or not reported on the Open Food Facts label for this item.</span>
           </div>
         )}
+      </div>
+
+      {/* Health-Conscious Nutrition Bar Chart Section (Sugar, Fat, and Protein representation) */}
+      <div className="p-5 sm:p-6 border-b border-stone-100 dark:border-stone-800 bg-white dark:bg-stone-900">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-emerald-700 dark:bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+              <BarChart3 className="w-4 h-4 stroke-[2.5]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h4 className="text-sm font-bold uppercase tracking-wider text-stone-900 dark:text-white leading-tight font-display">
+                  Health-Conscious Nutrition Bar Chart
+                </h4>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                  Sugar · Fat · Protein
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                Visual bar chart displaying key nutriments to highlight wholesome Tayyib choices and dietary balance
+              </p>
+            </div>
+          </div>
+          <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200 dark:border-stone-700 shadow-2xs w-fit">
+            {product.serving_size ? `Serving: ${product.serving_size}` : 'Standard: Per 100g'}
+          </span>
+        </div>
+
+        <HealthConsciousNutritionalBarChart
+          nutriments={product.nutriments}
+          servingSize={product.serving_size}
+          productName={product.product_name}
+          halalStatus={evaluation.status}
+        />
       </div>
 
       {/* New 'Nutritional Analysis' Section */}
@@ -2458,6 +2588,19 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
+                  onClick={() => {
+                    setIsShareModalOpen(false);
+                    setIsSocialImageModalOpen(true);
+                  }}
+                  className="px-3 py-2 text-xs font-semibold rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/80 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                  title="Generate a clean graphic image for social media warning/notice"
+                >
+                  <Camera className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>Share Image</span>
+                </button>
+
+                <button
                   onClick={handleCopySummary}
                   className={`px-3.5 py-2 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
                     copied
@@ -2561,7 +2704,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                       : evaluation.status}
                   </span>
                   <span className="text-xs font-mono-numbers font-bold text-stone-600 dark:text-stone-300">
-                    {confidenceBreakdown.score}% Confidence
+                    {confidenceBreakdown.score}/100 Halal Score
                   </span>
                 </div>
 
@@ -2618,6 +2761,43 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Shareable Social Media Image Generator Modal */}
+      <ShareableImageGenerator
+        isOpen={isSocialImageModalOpen}
+        onClose={() => setIsSocialImageModalOpen(false)}
+        product={{
+          code: product.code,
+          product_name: product.product_name,
+          brands: product.brands,
+          categories: product.categories,
+          ingredients_text: product.ingredients_text,
+          image_url: product.image_url,
+        }}
+        evaluation={{
+          status: evaluation.status,
+          confidenceScore: confidenceBreakdown.score,
+          summary: evaluation.summary,
+          isHalalCertified: evaluation.isHalalCertified,
+          certificationAuthority: evaluation.certificationAuthority,
+          criticalIngredients: evaluation.criticalIngredients,
+        }}
+        deepLink={getProductDeepLink()}
+      />
+
+      {/* Add To Pantry Modal */}
+      {onAddToPantry && (
+        <AddToPantryModal
+          isOpen={isPantryModalOpen}
+          onClose={() => setIsPantryModalOpen(false)}
+          product={product}
+          evaluation={evaluation}
+          onConfirmAdd={(item) => {
+            onAddToPantry(item);
+            setIsPantryModalOpen(false);
+          }}
+        />
       )}
     </div>
   );

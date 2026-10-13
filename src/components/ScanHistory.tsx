@@ -17,6 +17,7 @@ import {
   Copy,
   X,
   FileText,
+  Package,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import {
@@ -47,6 +48,7 @@ interface ScanHistoryProps {
   onClearHistory: () => void;
   onPopulateSampleHistory?: (items: HistoryItem[]) => void;
   cachedReportsCount?: number;
+  onAddToPantry?: (item: HistoryItem) => void;
 }
 
 type StatusFilter = 'ALL' | 'HALAL' | 'MUSHBOOH' | 'HARAM';
@@ -67,6 +69,7 @@ export const ScanHistory: React.FC<ScanHistoryProps> = ({
   onClearHistory,
   onPopulateSampleHistory,
   cachedReportsCount,
+  onAddToPantry,
 }) => {
   const [exportedFormat, setExportedFormat] = useState<'csv' | 'json' | 'pdf' | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
@@ -1304,8 +1307,24 @@ export const ScanHistory: React.FC<ScanHistoryProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center text-stone-400 dark:text-stone-500 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 shrink-0">
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                <div className="flex items-center gap-2 shrink-0">
+                  {onAddToPantry && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddToPantry(item);
+                      }}
+                      className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold bg-stone-100 hover:bg-emerald-50 dark:bg-stone-800 dark:hover:bg-emerald-950/60 text-stone-700 hover:text-emerald-800 dark:text-stone-300 dark:hover:text-emerald-300 border border-stone-200 dark:border-stone-700 hover:border-emerald-300 dark:hover:border-emerald-800 transition-colors flex items-center gap-1 cursor-pointer active:scale-95"
+                      title="Log this item into your digital pantry"
+                    >
+                      <Package className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span className="hidden sm:inline">Pantry</span>
+                    </button>
+                  )}
+                  <div className="text-stone-400 dark:text-stone-500 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
                 </div>
               </div>
             ))

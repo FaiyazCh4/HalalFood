@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Heart, Trash2, ArrowRight, ExternalLink, Download, Search, Check, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Heart, Trash2, ArrowRight, ExternalLink, Download, Search, Check, AlertTriangle, ShieldCheck, Package } from 'lucide-react';
 import { ProductData, EvaluationData } from './ProductResultCard.tsx';
 
 export interface FavoriteItem {
@@ -15,6 +15,7 @@ interface FavoritesListProps {
   onRemoveFavorite: (barcode: string) => void;
   onClearFavorites: () => void;
   onOpenScanner: () => void;
+  onAddToPantry?: (item: FavoriteItem) => void;
 }
 
 export const FavoritesList: React.FC<FavoritesListProps> = ({
@@ -23,6 +24,7 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
   onRemoveFavorite,
   onClearFavorites,
   onOpenScanner,
+  onAddToPantry,
 }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -294,7 +296,18 @@ export const FavoritesList: React.FC<FavoritesListProps> = ({
               </div>
 
               {/* Actions */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onAddToPantry && (
+                  <button
+                    onClick={() => onAddToPantry(item)}
+                    className="p-1.5 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold bg-stone-100 hover:bg-emerald-50 dark:bg-stone-800 dark:hover:bg-emerald-950/60 text-stone-700 hover:text-emerald-800 dark:text-stone-300 dark:hover:text-emerald-300 border border-stone-200 dark:border-stone-700 hover:border-emerald-300 dark:hover:border-emerald-800 transition-colors flex items-center gap-1 cursor-pointer active:scale-95"
+                    title="Log this favorite item into your digital pantry"
+                  >
+                    <Package className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span className="hidden sm:inline">Pantry</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => onRemoveFavorite(item.product.code)}
                   className="p-2 text-stone-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg transition-colors cursor-pointer"
