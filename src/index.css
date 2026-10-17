@@ -16,3 +16,70 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Subtle Scanner Camera Animations */
+@keyframes scannerLaserSweep {
+  0% {
+    top: 4%;
+    opacity: 0.75;
+  }
+  50% {
+    top: 92%;
+    opacity: 1;
+  }
+  100% {
+    top: 4%;
+    opacity: 0.75;
+  }
+}
+
+@keyframes scannerGridBreathe {
+  0%, 100% {
+    opacity: 0.06;
+  }
+  50% {
+    opacity: 0.18;
+  }
+}
+
+@keyframes scannerPulseDot {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+@keyframes scannerCornerGlow {
+  0%, 100% {
+    border-color: rgba(52, 211, 153, 0.75);
+    filter: drop-shadow(0 0 2px rgba(52, 211, 153, 0.4));
+  }
+  50% {
+    border-color: rgba(255, 255, 255, 0.95);
+    filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.8));
+  }
+}
+
+.animate-scan-laser {
+  animation: scannerLaserSweep 2.4s ease-in-out infinite;
+}
+
+.animate-scan-grid {
+  animation: scannerGridBreathe 3s ease-in-out infinite;
+}
+
+.animate-scan-dot {
+  animation: scannerPulseDot 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-corner-glow {
+  animation: scannerCornerGlow 2.4s ease-in-out infinite;
+}

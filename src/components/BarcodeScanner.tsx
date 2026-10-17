@@ -703,7 +703,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
         {cameraActive && (
           <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
             <div
-              className={`relative border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] transition-all duration-300 ${
+              className={`relative border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_0_9999px_rgba(0,0,0,0.58)] transition-all duration-300 overflow-hidden ${
                 scanMode === 'qrcode'
                   ? 'w-56 h-56 sm:w-64 sm:h-64'
                   : scanMode === 'barcode'
@@ -711,30 +711,62 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
                   : 'w-64 h-52 sm:w-72 sm:h-56'
               }`}
             >
-              {/* Corner brackets */}
-              <div className="absolute top-2 left-2 w-5 h-5 border-t-2 border-l-2 border-white" />
-              <div className="absolute top-2 right-2 w-5 h-5 border-t-2 border-r-2 border-white" />
-              <div className="absolute bottom-2 left-2 w-5 h-5 border-b-2 border-l-2 border-white" />
-              <div className="absolute bottom-2 right-2 w-5 h-5 border-b-2 border-r-2 border-white" />
+              {/* Subtle Scanning Mesh / Digital Grid Overlay */}
+              <div
+                className="absolute inset-0 pointer-events-none opacity-10 bg-[linear-gradient(to_right,#10b981_1px,transparent_1px),linear-gradient(to_bottom,#10b981_1px,transparent_1px)] bg-[size:24px_24px] animate-scan-grid"
+                aria-hidden="true"
+              />
+
+              {/* Subtle Optical Crosshair Marks */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-25" aria-hidden="true">
+                <div className="w-8 h-0.5 bg-emerald-300" />
+                <div className="h-8 w-0.5 bg-emerald-300 absolute" />
+              </div>
+
+              {/* Corner brackets with subtle luminous glow */}
+              <div className="absolute top-2 left-2 w-5 h-5 border-t-2 border-l-2 border-emerald-300 animate-corner-glow rounded-tl-xs z-20" />
+              <div className="absolute top-2 right-2 w-5 h-5 border-t-2 border-r-2 border-emerald-300 animate-corner-glow rounded-tr-xs z-20" />
+              <div className="absolute bottom-2 left-2 w-5 h-5 border-b-2 border-l-2 border-emerald-300 animate-corner-glow rounded-bl-xs z-20" />
+              <div className="absolute bottom-2 right-2 w-5 h-5 border-b-2 border-r-2 border-emerald-300 animate-corner-glow rounded-br-xs z-20" />
 
               {/* QR finder-pattern guides when QR or Auto mode is active */}
               {(scanMode === 'qrcode' || scanMode === 'all') && (
                 <>
-                  <div className="absolute top-4 left-4 w-5 h-5 border border-emerald-400/50 rounded-xs" />
-                  <div className="absolute top-4 right-4 w-5 h-5 border border-emerald-400/50 rounded-xs" />
-                  <div className="absolute bottom-4 left-4 w-5 h-5 border border-emerald-400/50 rounded-xs" />
+                  <div className="absolute top-4 left-4 w-5 h-5 border border-emerald-400/50 rounded-xs z-10" />
+                  <div className="absolute top-4 right-4 w-5 h-5 border border-emerald-400/50 rounded-xs z-10" />
+                  <div className="absolute bottom-4 left-4 w-5 h-5 border border-emerald-400/50 rounded-xs z-10" />
                 </>
               )}
 
-              {/* Scanning laser line animation */}
-              <div className="absolute inset-x-2 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_8px_rgba(16,185,129,0.85)] animate-pulse top-1/2 -translate-y-1/2" />
+              {/* Active Optical Frame Processing Status Badge */}
+              <div className="absolute top-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-emerald-400/40 text-[10px] font-mono tracking-wider uppercase text-emerald-300 shadow-xs z-20 pointer-events-none select-none">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-scan-dot shrink-0" />
+                <span className="font-semibold">Processing Frames</span>
+              </div>
+
+              {/* Dynamic Sweeping Laser Beam & Light Curtain */}
+              <div
+                className="absolute inset-x-0 animate-scan-laser pointer-events-none z-10"
+                aria-hidden="true"
+              >
+                {/* Upper light curtain trail */}
+                <div className="h-10 -mt-10 bg-gradient-to-b from-transparent via-emerald-400/15 to-transparent w-full" />
+                {/* Core focused laser beam line */}
+                <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-emerald-300 to-transparent shadow-[0_0_12px_rgba(52,211,153,0.95),0_0_4px_rgba(255,255,255,0.9)]" />
+                {/* Lower light curtain trail */}
+                <div className="h-10 bg-gradient-to-b from-transparent via-emerald-400/15 to-transparent w-full" />
+              </div>
             </div>
-            <p className="text-white text-xs font-medium mt-4 bg-black/60 px-3 py-1 rounded-lg backdrop-blur-xs">
-              {scanMode === 'qrcode'
-                ? 'Center QR code inside the square frame'
-                : scanMode === 'barcode'
-                ? 'Align 1D barcode inside the frame'
-                : 'Align 1D barcode or 2D QR code inside the frame'}
+
+            <p className="text-white text-xs font-medium mt-4 bg-black/60 px-3 py-1 rounded-lg backdrop-blur-xs flex items-center gap-1.5">
+              <ScanLine className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
+              <span>
+                {scanMode === 'qrcode'
+                  ? 'Center QR code inside the square frame'
+                  : scanMode === 'barcode'
+                  ? 'Align 1D barcode inside the frame'
+                  : 'Align 1D barcode or 2D QR code inside the frame'}
+              </span>
             </p>
           </div>
         )}
