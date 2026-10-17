@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2,
   XCircle,
@@ -34,7 +34,11 @@ import {
   ArrowRight,
   Camera,
   Image as ImageIcon,
-  Package
+  Package,
+  Settings,
+  SlidersHorizontal,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
@@ -55,6 +59,14 @@ import {
   HalalConfidenceBreakdown,
 } from '../data/halalRules.ts';
 import { HalalScoreCircularIndicator } from './HalalScoreCircularIndicator.tsx';
+import {
+  getNutritionalAlertsPreferences,
+  saveNutritionalAlertsPreferences,
+  evaluateNutritionalAlerts,
+  NutritionalAlertsPreferences,
+  ActiveNutritionalAlert,
+  EVENT_NUTRITIONAL_ALERTS_CHANGED,
+} from '../utils/nutritionalAlerts.ts';
 
 export interface ProductData {
   code: string;
@@ -113,6 +125,7 @@ interface ProductResultCardProps {
   onSelectAlternative?: (barcode: string) => void;
   regionalAssessment?: RegionalAssessmentResult;
   onSelectRegion?: (standardId: RegionalStandardId) => void;
+  onOpenSettings?: () => void;
 }
 
 export const ProductResultCard: React.FC<ProductResultCardProps> = ({
@@ -132,6 +145,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   onSelectAlternative,
   regionalAssessment,
   onSelectRegion,
+  onOpenSettings,
 }) => {
   const [showAllIngredients, setShowAllIngredients] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
@@ -146,6 +160,26 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrBadgePngUrl, setQrBadgePngUrl] = useState<string>('');
   const [isEntered, setIsEntered] = useState<boolean>(false);
+
+  // Nutritional Alerts Preferences state (syncs with localStorage & global settings)
+  const [nutritionalAlertPrefs, setNutritionalAlertPrefs] = useState<NutritionalAlertsPreferences>(
+    getNutritionalAlertsPreferences
+  );
+
+  useEffect(() => {
+    const handleAlertsUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<NutritionalAlertsPreferences>;
+      if (customEvent.detail) {
+        setNutritionalAlertPrefs(customEvent.detail);
+      } else {
+        setNutritionalAlertPrefs(getNutritionalAlertsPreferences());
+      }
+    };
+    window.addEventListener(EVENT_NUTRITIONAL_ALERTS_CHANGED, handleAlertsUpdate);
+    return () => {
+      window.removeEventListener(EVENT_NUTRITIONAL_ALERTS_CHANGED, handleAlertsUpdate);
+    };
+  }, []);
 
   // Gemini Auto-Translate Ingredients state (initializes from saved preference or browser locale)
   const [targetTranslationLang, setTargetTranslationLang] = useState<string>(() => {
@@ -445,15 +479,30 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   const satFatNumber = saturatedFat !== null ? Number(saturatedFat) : null;
   const saltNumber = salt !== null ? Number(salt) : null;
 
-  // Health-impact warning thresholds (UK FSA / WHO Front-of-Pack Traffic Light standards per 100g)
-  // High Sugar: > 22.5g / 100g
-  // High Fat: > 17.5g / 100g OR Saturated Fat > 5.0g / 100g
-  // High Salt / Sodium: > 1.5g / 100g
-  const isHighSugar = sugarNumber !== null && sugarNumber > 22.5;
-  const isHighFat = fatNumber !== null && (fatNumber > 17.5 || (satFatNumber !== null && satFatNumber > 5.0));
-  const isHighSalt = saltNumber !== null && saltNumber > 1.5;
-  const hasNutrientWarnings = isHighSugar || isHighFat || isHighSalt;
-  const warningCount = (isHighSugar ? 1 : 0) + (isHighFat ? 1 : 0) + (isHighSalt ? 1 : 0);
+  // Dynamic Nutritional Alerts evaluation (synced with user's toggle & presets)
+  const evaluatedAlerts = evaluateNutritionalAlerts(product.nutriments, nutritionalAlertPrefs);
+  const activeNutritionalAlerts = evaluatedAlerts.alerts;
+  const isNutritionalAlertsEnabled = evaluatedAlerts.isEnabled;
+  const hasActiveNutritionalAlerts = evaluatedAlerts.hasAlerts;
+
+  // Individual active alert flags respecting user's category toggles
+  const isHighSugar = isNutritionalAlertsEnabled && nutritionalAlertPrefs.alertSugar && activeNutritionalAlerts.some((a) => a.id === 'sugar');
+  const isHighFat = isNutritionalAlertsEnabled && nutritionalAlertPrefs.alertFat && activeNutritionalAlerts.some((a) => a.id === 'fat' || a.id === 'sat_fat');
+  const isHighSalt = isNutritionalAlertsEnabled && nutritionalAlertPrefs.alertSodium && activeNutritionalAlerts.some((a) => a.id === 'sodium');
+  const isHighCalories = isNutritionalAlertsEnabled && nutritionalAlertPrefs.alertCalories && activeNutritionalAlerts.some((a) => a.id === 'calories');
+  const hasNutrientWarnings = isNutritionalAlertsEnabled && activeNutritionalAlerts.length > 0;
+  const warningCount = activeNutritionalAlerts.length;
+
+  const handleToggleNutritionalAlertsMaster = () => {
+    const nextState = !nutritionalAlertPrefs.enabled;
+    const updated = saveNutritionalAlertsPreferences({ enabled: nextState });
+    setNutritionalAlertPrefs(updated);
+  };
+
+  const handleToggleNutrientAlertCategory = (key: 'alertSugar' | 'alertSodium' | 'alertFat' | 'alertCalories') => {
+    const updated = saveNutritionalAlertsPreferences({ [key]: !nutritionalAlertPrefs[key] });
+    setNutritionalAlertPrefs(updated);
+  };
 
   // Generate complete, structured shareable summary text with product name & final verdict
   const generateShareSummary = (): string => {
@@ -1344,24 +1393,151 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
         )}
       </div>
 
-      {/* Nutritional Information Card */}
+      {/* Nutritional Information Card with Interactive Alert Toggles */}
       <div className="p-5 sm:p-6 border-b border-stone-100 dark:border-stone-800 bg-stone-50/40 dark:bg-stone-900/40">
-        <div className="flex items-center justify-between gap-2 mb-3.5">
+        {/* Header with Title and Interactive Nutritional Alerts Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3.5">
           <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
-            <h4 className="text-xs font-bold uppercase tracking-wider text-stone-900 dark:text-white">
-              Basic Nutritional Information
-            </h4>
+            <div className="w-7 h-7 rounded-lg bg-emerald-700 dark:bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+              <Activity className="w-4 h-4 stroke-[2.5]" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-stone-900 dark:text-white leading-tight font-display">
+                Basic Nutritional Information
+              </h4>
+              <p className="text-[11px] text-stone-500 dark:text-stone-400">
+                {product.serving_size ? `Per 100g · Serving: ${product.serving_size}` : 'Standard: Values per 100g portion'}
+              </p>
+            </div>
           </div>
-          <span className="text-[11px] font-medium text-stone-500 dark:text-stone-400">
-            {product.serving_size ? `Per 100g · Serving: ${product.serving_size}` : 'Values Per 100g'}
+
+          {/* Nutritional Alerts Quick Controls */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Master Alert Switch */}
+            <button
+              onClick={handleToggleNutritionalAlertsMaster}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs active:scale-95 ${
+                nutritionalAlertPrefs.enabled
+                  ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700'
+                  : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-400 border-stone-200 dark:border-stone-700'
+              }`}
+              title={nutritionalAlertPrefs.enabled ? 'Nutritional alerts active. Click to mute alerts.' : 'Nutritional alerts muted. Click to enable alerts.'}
+            >
+              {nutritionalAlertPrefs.enabled ? (
+                <ToggleRight className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <ToggleLeft className="w-4 h-4 text-stone-400" />
+              )}
+              <span>Alerts: {nutritionalAlertPrefs.enabled ? 'ON' : 'OFF'}</span>
+            </button>
+
+            {/* Configure in Settings */}
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="p-1.5 rounded-lg border border-stone-200 dark:border-stone-700 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors cursor-pointer"
+                title="Configure Nutritional Intake Limits in Settings"
+                aria-label="Configure nutritional alerts"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Nutrient Alert Filter Chips Row */}
+        <div className="mb-4 p-2.5 rounded-xl bg-white dark:bg-stone-850 border border-stone-200/80 dark:border-stone-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-stone-500 dark:text-stone-400 uppercase tracking-wider mr-1">
+              Active Alerts:
+            </span>
+
+            {/* Sugar Toggle Chip */}
+            <button
+              onClick={() => handleToggleNutrientAlertCategory('alertSugar')}
+              disabled={!nutritionalAlertPrefs.enabled}
+              className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer border ${
+                !nutritionalAlertPrefs.enabled
+                  ? 'opacity-40 cursor-not-allowed bg-stone-100 text-stone-500 border-stone-200 dark:bg-stone-800 dark:border-stone-700'
+                  : nutritionalAlertPrefs.alertSugar
+                  ? isHighSugar
+                    ? 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-200 border-rose-300 dark:border-rose-800 font-bold'
+                    : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 border-transparent line-through'
+              }`}
+              title="Toggle High Sugar Intake Alert"
+            >
+              <Droplets className="w-3 h-3 text-rose-500" />
+              <span>Sugar {nutritionalAlertPrefs.alertSugar ? '✓' : 'off'}</span>
+            </button>
+
+            {/* Sodium Toggle Chip */}
+            <button
+              onClick={() => handleToggleNutrientAlertCategory('alertSodium')}
+              disabled={!nutritionalAlertPrefs.enabled}
+              className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer border ${
+                !nutritionalAlertPrefs.enabled
+                  ? 'opacity-40 cursor-not-allowed bg-stone-100 text-stone-500 border-stone-200 dark:bg-stone-800 dark:border-stone-700'
+                  : nutritionalAlertPrefs.alertSodium
+                  ? isHighSalt
+                    ? 'bg-amber-100 dark:bg-amber-950 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-800 font-bold'
+                    : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 border-transparent line-through'
+              }`}
+              title="Toggle High Sodium / Salt Intake Alert"
+            >
+              <Scale className="w-3 h-3 text-amber-500" />
+              <span>Sodium {nutritionalAlertPrefs.alertSodium ? '✓' : 'off'}</span>
+            </button>
+
+            {/* Fat Toggle Chip */}
+            <button
+              onClick={() => handleToggleNutrientAlertCategory('alertFat')}
+              disabled={!nutritionalAlertPrefs.enabled}
+              className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer border ${
+                !nutritionalAlertPrefs.enabled
+                  ? 'opacity-40 cursor-not-allowed bg-stone-100 text-stone-500 border-stone-200 dark:bg-stone-800 dark:border-stone-700'
+                  : nutritionalAlertPrefs.alertFat
+                  ? isHighFat
+                    ? 'bg-orange-100 dark:bg-orange-950 text-orange-900 dark:text-orange-200 border-orange-300 dark:border-orange-800 font-bold'
+                    : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 border-transparent line-through'
+              }`}
+              title="Toggle High Fat & Saturated Fat Intake Alert"
+            >
+              <Heart className="w-3 h-3 text-orange-500" />
+              <span>Sat. Fat {nutritionalAlertPrefs.alertFat ? '✓' : 'off'}</span>
+            </button>
+
+            {/* Calories Toggle Chip */}
+            <button
+              onClick={() => handleToggleNutrientAlertCategory('alertCalories')}
+              disabled={!nutritionalAlertPrefs.enabled}
+              className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer border ${
+                !nutritionalAlertPrefs.enabled
+                  ? 'opacity-40 cursor-not-allowed bg-stone-100 text-stone-500 border-stone-200 dark:bg-stone-800 dark:border-stone-700'
+                  : nutritionalAlertPrefs.alertCalories
+                  ? isHighCalories
+                    ? 'bg-red-100 dark:bg-red-950 text-red-900 dark:text-red-200 border-red-300 dark:border-red-800 font-bold'
+                    : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                  : 'bg-stone-100 dark:bg-stone-800 text-stone-500 dark:text-stone-400 border-transparent line-through'
+              }`}
+              title="Toggle High Calorie Density Alert"
+            >
+              <Flame className="w-3 h-3 text-red-500" />
+              <span>Calories {nutritionalAlertPrefs.alertCalories ? '✓' : 'off'}</span>
+            </button>
+          </div>
+
+          <span className="text-[11px] text-stone-500 dark:text-stone-400 font-medium">
+            Standard: {nutritionalAlertPrefs.dietaryStandard === 'low_sugar' ? 'Low-Sugar Focus' : nutritionalAlertPrefs.dietaryStandard === 'low_sodium' ? 'Low-Sodium Focus' : 'WHO 2,000 kcal'}
           </span>
         </div>
 
         {hasNutritionalInfo ? (
           <>
-            {/* Prominent Color-Coded Nutritional Warnings Banner */}
-            {hasNutrientWarnings ? (
+            {/* Condition 1: Alerts Enabled AND High-Intake Items Exceeded */}
+            {isNutritionalAlertsEnabled && hasNutrientWarnings ? (
               <div className="mb-4 p-4 rounded-2xl border-2 border-rose-300 dark:border-rose-900 bg-rose-50/80 dark:bg-rose-950/40 text-rose-950 dark:text-rose-100 shadow-xs">
                 <div className="flex items-center justify-between gap-2 mb-2.5">
                   <div className="flex items-center gap-2">
@@ -1370,7 +1546,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                     </div>
                     <div>
                       <span className="text-xs font-bold uppercase tracking-wider text-rose-900 dark:text-rose-200 block leading-tight">
-                        Health-Impact Alerts ({warningCount} High Nutrient{warningCount > 1 ? 's' : ''})
+                        Nutritional Alert: {warningCount} Item{warningCount > 1 ? 's' : ''} Exceeding Daily Recommended Levels
                       </span>
                       <span className="text-[11px] text-rose-700 dark:text-rose-400">
                         Based on WHO & International Front-of-Pack Traffic Light standards
@@ -1393,7 +1569,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                         {sugarNumber?.toFixed(1)}g <span className="text-xs font-normal text-stone-500 dark:text-stone-400">/ 100g</span>
                       </div>
                       <p className="text-[11px] text-stone-600 dark:text-stone-300 mt-1 leading-normal">
-                        Exceeds 22.5g high-sugar threshold (~{Math.round(((sugarNumber || 0) / 50) * 100)}% of daily allowance in 100g).
+                        Exceeds {nutritionalAlertPrefs.dietaryStandard === 'low_sugar' ? '10.0g' : '22.5g'} threshold (~{Math.round(((sugarNumber || 0) / 50) * 100)}% of daily allowance in 100g).
                       </p>
                     </div>
                   )}
@@ -1409,7 +1585,7 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                       </div>
                       <p className="text-[11px] text-stone-600 dark:text-stone-300 mt-1 leading-normal">
                         {satFatNumber !== null && satFatNumber > 5.0
-                          ? `Contains ${satFatNumber.toFixed(1)}g saturated fat (exceeds 5.0g high threshold).`
+                          ? `Contains ${satFatNumber.toFixed(1)}g saturated fat (exceeds 5.0g threshold · ~${Math.round((satFatNumber / 20) * 100)}% daily limit).`
                           : 'Exceeds 17.5g high-fat threshold per 100g portion.'}
                       </p>
                     </div>
@@ -1425,27 +1601,71 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                         {saltNumber?.toFixed(2)}g <span className="text-xs font-normal text-stone-500 dark:text-stone-400">salt / 100g</span>
                       </div>
                       <p className="text-[11px] text-stone-600 dark:text-stone-300 mt-1 leading-normal">
-                        Exceeds 1.5g high-salt benchmark (~{Math.round(((saltNumber || 0) / 6) * 100)}% daily allowance).
+                        Exceeds {nutritionalAlertPrefs.dietaryStandard === 'low_sodium' ? '0.8g' : '1.5g'} threshold (~{Math.round(((saltNumber || 0) / 6) * 100)}% daily allowance).
+                      </p>
+                    </div>
+                  )}
+
+                  {isHighCalories && (
+                    <div className="p-3 bg-white/95 dark:bg-stone-850 dark:bg-stone-900/90 rounded-xl border border-amber-300 dark:border-amber-800 text-xs shadow-xs">
+                      <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-bold mb-1">
+                        <Flame className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span>High Calorie Density</span>
+                      </div>
+                      <div className="font-mono-numbers text-base font-bold text-stone-900 dark:text-white">
+                        {calories !== null ? Number(calories).toFixed(0) : '--'} <span className="text-xs font-normal text-stone-500 dark:text-stone-400">kcal / 100g</span>
+                      </div>
+                      <p className="text-[11px] text-stone-600 dark:text-stone-300 mt-1 leading-normal">
+                        Exceeds 400 kcal per 100g portion (~{calories ? Math.round((Number(calories) / 2000) * 100) : 0}% daily intake).
                       </p>
                     </div>
                   )}
                 </div>
               </div>
-            ) : (
-              <div className="mb-3.5 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 flex items-center gap-2 text-xs">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                <span>
-                  <strong className="font-semibold text-emerald-900 dark:text-emerald-100">Balanced Nutritional Profile:</strong> No high sugar, saturated fat, or sodium levels detected per 100g.
+            ) : isNutritionalAlertsEnabled ? (
+              <div className="mb-3.5 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>
+                    <strong className="font-semibold text-emerald-900 dark:text-emerald-100">Balanced Nutritional Profile:</strong> No items exceed your active recommended daily intake thresholds.
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 shrink-0">
+                  Within Limits
                 </span>
+              </div>
+            ) : (
+              <div className="mb-3.5 p-3 rounded-xl border border-stone-200 dark:border-stone-800 bg-stone-100/70 dark:bg-stone-850 text-stone-600 dark:text-stone-400 flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <Info className="w-4 h-4 text-stone-400 shrink-0" />
+                  <span>
+                    Nutritional alerts are currently <strong>turned OFF</strong>. High sugar and sodium warnings are hidden.
+                  </span>
+                </div>
+                <button
+                  onClick={handleToggleNutritionalAlertsMaster}
+                  className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white shrink-0 cursor-pointer shadow-2xs transition-colors"
+                >
+                  Enable Alerts
+                </button>
               </div>
             )}
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {/* Calories Card */}
-            <div className="p-3.5 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl shadow-xs">
+            <div className={`p-3.5 bg-white dark:bg-stone-800 rounded-xl shadow-xs border transition-colors ${
+              isHighCalories ? 'border-amber-300 dark:border-amber-800 bg-amber-50/20 dark:bg-amber-950/30 ring-1 ring-amber-200 dark:ring-amber-900' : 'border-stone-200 dark:border-stone-700'
+            }`}>
               <div className="flex items-center justify-between text-stone-500 dark:text-stone-400 mb-1">
                 <span className="text-xs font-medium">Calories</span>
-                <Flame className="w-4 h-4 text-amber-500" />
+                {isHighCalories ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-0.5">
+                    <Flame className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                    <span>Dense</span>
+                  </span>
+                ) : (
+                  <Flame className="w-4 h-4 text-amber-500" />
+                )}
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-xl sm:text-2xl font-bold text-stone-900 dark:text-white font-display">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Scan, Sparkles, BookOpen, Search, History, Heart, ShoppingCart, Package, MapPin, Zap, WifiOff, Database, Moon, Sun } from 'lucide-react';
+import { Scan, Sparkles, BookOpen, Search, History, Heart, ShoppingCart, Package, MapPin, Zap, WifiOff, Database, Moon, Sun, Settings } from 'lucide-react';
 import { DailyScanInfo } from '../utils/scanLimit.ts';
 
 export type NavTabId =
@@ -27,6 +27,7 @@ interface NavbarProps {
   cachedReportsCount?: number;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,6 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   cachedReportsCount = 0,
   isDarkMode = false,
   onToggleDarkMode,
+  onOpenSettings,
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white/95 dark:bg-stone-900/95 backdrop-blur-md border-b border-stone-200 dark:border-stone-800 transition-colors w-full">
@@ -228,6 +230,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               ) : (
                 <Moon className="w-4 h-4 text-stone-700" />
               )}
+            </button>
+          )}
+
+          {/* Settings & Dietary Preferences */}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className="p-1.5 sm:p-2 rounded-lg border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700 transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center shrink-0"
+              title="Settings & Nutritional Alerts"
+              aria-label="Open settings and nutritional alert preferences"
+            >
+              <Settings className="w-4 h-4" />
             </button>
           )}
 

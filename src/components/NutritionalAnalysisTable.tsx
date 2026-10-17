@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Activity,
   Scale,
@@ -14,6 +14,12 @@ import {
   Wheat,
   PieChart
 } from 'lucide-react';
+import {
+  getNutritionalAlertsPreferences,
+  evaluateNutritionalAlerts,
+  EVENT_NUTRITIONAL_ALERTS_CHANGED,
+  NutritionalAlertsPreferences,
+} from '../utils/nutritionalAlerts.ts';
 
 export interface NutritionalAnalysisProps {
   nutriments?: Record<string, any>;
@@ -45,6 +51,26 @@ export const NutritionalAnalysisTable: React.FC<NutritionalAnalysisProps> = ({
 }) => {
   const [activeFilter, setActiveFilter] = useState<'all' | 'macros' | 'key_focus'>('all');
   const [showServingComparison, setShowServingComparison] = useState<boolean>(true);
+  const [alertPrefs, setAlertPrefs] = useState<NutritionalAlertsPreferences>(getNutritionalAlertsPreferences);
+
+  useEffect(() => {
+    const handleUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<NutritionalAlertsPreferences>;
+      if (customEvent.detail) {
+        setAlertPrefs(customEvent.detail);
+      } else {
+        setAlertPrefs(getNutritionalAlertsPreferences());
+      }
+    };
+    window.addEventListener(EVENT_NUTRITIONAL_ALERTS_CHANGED, handleUpdate);
+    return () => {
+      window.removeEventListener(EVENT_NUTRITIONAL_ALERTS_CHANGED, handleUpdate);
+    };
+  }, []);
+
+  const evaluatedAlerts = evaluateNutritionalAlerts(nutriments, alertPrefs);
+  const activeAlerts = evaluatedAlerts.alerts;
+  const isAlertsEnabled = evaluatedAlerts.isEnabled;
 
   // Helper to extract numeric values from multiple possible Open Food Facts keys
   const getNutrientValue = (keys: string[]): number | null => {
@@ -475,10 +501,22 @@ export const NutritionalAnalysisTable: React.FC<NutritionalAnalysisProps> = ({
                   ? Math.min(100, Math.round((row.value100g / row.dailyReference) * 100))
                   : null;
 
+              const isRowAlerted =
+                isAlertsEnabled &&
+                ((row.id === 'sugars' && alertPrefs.alertSugar && activeAlerts.some((a) => a.id === 'sugar')) ||
+                  (row.id === 'salt' && alertPrefs.alertSodium && activeAlerts.some((a) => a.id === 'sodium')) ||
+                  (row.id === 'fat' && alertPrefs.alertFat && activeAlerts.some((a) => a.id === 'fat')) ||
+                  (row.id === 'satFat' && alertPrefs.alertFat && activeAlerts.some((a) => a.id === 'sat_fat')) ||
+                  (row.id === 'calories' && alertPrefs.alertCalories && activeAlerts.some((a) => a.id === 'calories')));
+
               return (
                 <tr
                   key={row.id}
-                  className={`transition-colors hover:bg-stone-50/70 dark:hover:bg-stone-800/40 ${
+                  className={`transition-colors ${
+                    isRowAlerted
+                      ? 'bg-rose-50/60 dark:bg-rose-950/30 hover:bg-rose-50/80 dark:hover:bg-rose-950/50 border-l-2 border-l-rose-600'
+                      : 'hover:bg-stone-50/70 dark:hover:bg-stone-800/40'
+                  } ${
                     row.isSubItem
                       ? 'bg-stone-50/30 dark:bg-stone-900/30 text-stone-600 dark:text-stone-400'
                       : 'text-stone-900 dark:text-white'
@@ -546,16 +584,23 @@ export const NutritionalAnalysisTable: React.FC<NutritionalAnalysisProps> = ({
                   {/* Traffic Light / Comparative Classification */}
                   <td className="py-2.5 px-3.5 sm:px-4">
                     {row.value100g !== null ? (
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${row.trafficBg} ${row.trafficColor} ${row.trafficBorder}`}
-                      >
-                        {row.trafficLight === 'high' && ['sugars', 'fat', 'satFat', 'salt'].includes(row.id) ? (
-                          <AlertTriangle className="w-3 h-3 stroke-[2.5]" />
-                        ) : row.trafficLight === 'optimal' || row.trafficLight === 'source' || (row.trafficLight === 'high' && row.id === 'protein') ? (
-                          <ShieldCheck className="w-3 h-3 stroke-[2.5]" />
-                        ) : null}
-                        <span>{row.trafficLabel}</span>
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${row.trafficBg} ${row.trafficColor} ${row.trafficBorder}`}
+                        >
+                          {row.trafficLight === 'high' && ['sugars', 'fat', 'satFat', 'salt'].includes(row.id) ? (
+                            <AlertTriangle className="w-3 h-3 stroke-[2.5]" />
+                          ) : row.trafficLight === 'optimal' || row.trafficLight === 'source' || (row.trafficLight === 'high' && row.id === 'protein') ? (
+                            <ShieldCheck className="w-3 h-3 stroke-[2.5]" />
+                          ) : null}
+                          <span>{row.trafficLabel}</span>
+                        </span>
+                        {isRowAlerted && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200 border border-rose-300 dark:border-rose-800 flex items-center gap-0.5">
+                            ⚠️ Exceeds Limit
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-[10px] text-stone-400 italic">Not listed</span>
                     )}

@@ -15,6 +15,7 @@ import { PantryItem, calculateDaysRemaining } from './types/pantry.ts';
 import { generateSamplePantryItems } from './utils/pantrySamples.ts';
 import { DietaryGuideModal } from './components/DietaryGuideModal.tsx';
 import { UpgradeModal } from './components/UpgradeModal.tsx';
+import { SettingsModal } from './components/SettingsModal.tsx';
 import { RegionalStandardBar } from './components/RegionalStandardBar.tsx';
 import {
   detectUserRegionalStandard,
@@ -119,6 +120,7 @@ export default function App() {
   }, [scanPushBanner]);
   const [isDietaryGuideOpen, setIsDietaryGuideOpen] = useState<boolean>(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState<boolean>(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [dailyScanInfo, setDailyScanInfo] = useState<DailyScanInfo>(() => getDailyScanInfo());
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     try {
@@ -858,6 +860,7 @@ export default function App() {
         cachedReportsCount={cachedReportsCount}
         isDarkMode={isDarkMode}
         onToggleDarkMode={toggleDarkMode}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -967,6 +970,7 @@ export default function App() {
                 isOfflineCached={isReportFromCache}
                 cachedAt={cachedReportTime}
                 onSelectAlternative={(barcode) => handleBarcodeDetected(barcode)}
+                onOpenSettings={() => setIsSettingsModalOpen(true)}
               />
             ) : (
               <>
@@ -1186,6 +1190,17 @@ export default function App() {
       <DietaryGuideModal
         isOpen={isDietaryGuideOpen}
         onClose={() => setIsDietaryGuideOpen(false)}
+      />
+
+      {/* Settings & Nutritional Intake Alerts Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        isDarkMode={isDarkMode}
+        onToggleDarkMode={toggleDarkMode}
+        regionState={regionState}
+        onSelectRegion={handleSelectRegion}
+        cachedReportsCount={cachedReportsCount}
       />
 
       {/* Daily Free Scan Limit & Pricing Plans Modal */}
