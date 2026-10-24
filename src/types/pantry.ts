@@ -310,3 +310,55 @@ export function getExpiryStatus(item: PantryItem): ExpiryStatus {
     progressPercent: Math.min(progressPercent, 60),
   };
 }
+
+export type AutoQuickSaveMode = 'off' | 'shopping-list' | 'pantry' | 'both';
+
+const AUTO_QUICKSAVE_STORAGE_KEY = 'halalcheck_auto_quicksave_mode';
+
+export function getAutoQuickSaveMode(): AutoQuickSaveMode {
+  try {
+    const raw = localStorage.getItem(AUTO_QUICKSAVE_STORAGE_KEY);
+    if (raw === 'shopping-list' || raw === 'pantry' || raw === 'both') {
+      return raw;
+    }
+    return 'off';
+  } catch {
+    return 'off';
+  }
+}
+
+export function saveAutoQuickSaveMode(mode: AutoQuickSaveMode): void {
+  try {
+    localStorage.setItem(AUTO_QUICKSAVE_STORAGE_KEY, mode);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/**
+ * Builds a complete PantryItem automatically using smart category/shelf-life defaults
+ * for 1-click Quick-Save from the scan result screen.
+ */
+export function createQuickSavePantryItem(
+  product: ProductData,
+  evaluation: EvaluationData
+): PantryItem {
+  const defaults = estimatePantryDefaults(product, evaluation);
+  const todayStr = formatDateToIso(new Date());
+  const expirationDate = addDaysToDate(new Date(), defaults.defaultDays);
+
+  return {
+    id: `${product.code}_${Date.now()}`,
+    product,
+    evaluation,
+    quantity: 1,
+    unit: 'pack',
+    storageLocation: defaults.defaultLocation,
+    dateAdded: todayStr,
+    expirationDate,
+    isHalalCritical: defaults.isHalalCritical,
+    criticalReason: defaults.isHalalCritical ? defaults.criticalReason : undefined,
+    notes: 'Quick-saved from barcode scan result',
+  };
+}
+

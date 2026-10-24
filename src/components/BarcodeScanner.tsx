@@ -16,6 +16,7 @@ import {
   Bell,
   BellRing,
   BellOff,
+  Smartphone,
 } from 'lucide-react';
 import { SAMPLE_PRODUCTS } from '../data/halalRules.ts';
 import { DailyScanInfo } from '../utils/scanLimit.ts';
@@ -25,6 +26,18 @@ import {
   requestScanNotificationPermission,
   setScanNotificationsEnabled,
 } from '../utils/scanNotifications.ts';
+
+const HAPTICS_STORAGE_KEY = 'halalcheck_haptics_enabled';
+
+function getStoredHapticsPreference(): boolean {
+  try {
+    const raw = localStorage.getItem(HAPTICS_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw === 'true';
+  } catch {
+    return true;
+  }
+}
 
 export type ScanFormatMode = 'all' | 'barcode' | 'qrcode';
 
@@ -208,12 +221,61 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
   const [lastDetectedBadge, setLastDetectedBadge] = useState<string | null>(null);
   const [hasScannedRecent, setHasScannedRecent] = useState<string | null>(null);
   const [isHighlighted, setIsHighlighted] = useState<boolean>(false);
+  const [hapticsEnabled, setHapticsEnabled] = useState<boolean>(() =>
+    getStoredHapticsPreference()
+  );
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() =>
     areScanNotificationsEnabled()
   );
   const [notificationPermission, setNotificationPermission] = useState<
     NotificationPermission | 'unsupported'
   >(() => getBrowserNotificationPermission());
+
+  const hapticsEnabledRef = useRef<boolean>(hapticsEnabled);
+  const scanInProgressRef = useRef<boolean>(false);
+  const lastDetectionTimeRef = useRef<number>(0);
+  const prevIsLoadingRef = useRef<boolean>(isLoading);
+
+  useEffect(() => {
+    hapticsEnabledRef.current = hapticsEnabled;
+  }, [hapticsEnabled]);
+
+  /**
+   * Triggers tactile device vibration via navigator.vibrate() when supported and enabled.
+   * - 'detection': crisp 50ms single pulse when barcode/QR is first captured
+   * - 'completion': distinct double-pulse [40, 50, 90] when scan analysis completes
+   * - 'error': warning pulse [80, 40, 80] when scan/decode fails
+   */
+  const triggerHapticFeedback = (type: 'detection' | 'completion' | 'error') => {
+    if (!hapticsEnabledRef.current) return;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        if (type === 'detection') {
+          navigator.vibrate(50);
+        } else if (type === 'completion') {
+          navigator.vibrate([40, 50, 90]);
+        } else if (type === 'error') {
+          navigator.vibrate([80, 40, 80]);
+        }
+      }
+    } catch {
+      // Ignore vibration errors on unsupported or restricted contexts
+    }
+  };
+
+  const handleToggleHaptics = () => {
+    const next = !hapticsEnabled;
+    setHapticsEnabled(next);
+    hapticsEnabledRef.current = next;
+    try {
+      localStorage.setItem(HAPTICS_STORAGE_KEY, String(next));
+    } catch {
+      // ignore storage errors
+    }
+    if (next) {
+      triggerHapticFeedback('detection');
+    }
+  };
 
   const handleToggleNotifications = async () => {
     const currentPerm = getBrowserNotificationPermission();
@@ -258,8 +320,27 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
   const handleDecodedPayload = (rawDecodedText: string) => {
     const parsed = parseScannedInput(rawDecodedText);
     setLastDetectedBadge(parsed.displayLabel);
+    scanInProgressRef.current = true;
+    lastDetectionTimeRef.current = Date.now();
+    // Tactile feedback upon successful barcode/QR detection
+    triggerHapticFeedback('detection');
     onBarcodeDetected(parsed.resolvedCode);
   };
+
+  // Trigger tactile feedback upon scan completion when isLoading transitions from true -> false
+  useEffect(() => {
+    if (prevIsLoadingRef.current && !isLoading && scanInProgressRef.current) {
+      scanInProgressRef.current = false;
+      const elapsed = Date.now() - lastDetectionTimeRef.current;
+      const delay = elapsed < 120 ? 120 - elapsed : 0;
+      const timer = setTimeout(() => {
+        triggerHapticFeedback('completion');
+      }, delay);
+      prevIsLoadingRef.current = isLoading;
+      return () => clearTimeout(timer);
+    }
+    prevIsLoadingRef.current = isLoading;
+  }, [isLoading]);
 
   // Start live camera with configured formats (1D Barcodes + 2D QR Codes)
   const startCamera = async (overrideMode?: ScanFormatMode) => {
@@ -395,6 +476,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
         handleDecodedPayload(decodedText);
       }
     } catch {
+      triggerHapticFeedback('error');
       setCameraError(
         'No readable barcode or QR code could be detected in this photo. Try aiming closer with good lighting or paste the code/URL below.'
       );
@@ -417,8 +499,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
 
     const parsed = parseScannedInput(raw);
     if (parsed.resolvedCode.length >= 4) {
-      setLastDetectedBadge(parsed.displayLabel);
-      onBarcodeDetected(parsed.resolvedCode);
+      handleDecodedPayload(raw);
     }
   };
 
@@ -436,6 +517,21 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
 
   useEffect(() => {
     return () => {
+      // When BarcodeScanner unmounts because a scan completed and transitioned to ProductResultCard,
+      // fire the scan completion vibration pattern.
+      if (scanInProgressRef.current) {
+        scanInProgressRef.current = false;
+        const elapsed = Date.now() - lastDetectionTimeRef.current;
+        const delay = elapsed < 120 ? 120 - elapsed : 0;
+        if (delay > 0) {
+          setTimeout(() => {
+            triggerHapticFeedback('completion');
+          }, delay);
+        } else {
+          triggerHapticFeedback('completion');
+        }
+      }
+
       if (scannerRef.current) {
         try {
           scannerRef.current
@@ -523,6 +619,31 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({
               <span>QR Code</span>
             </button>
           </div>
+
+          {/* Tactile Haptic Feedback Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleHaptics}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer ${
+              hapticsEnabled
+                ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-200 dark:border-emerald-800/80 text-emerald-800 dark:text-emerald-300'
+                : 'bg-stone-50 dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-500 dark:text-stone-400 hover:text-stone-800 dark:hover:text-stone-200'
+            }`}
+            title={
+              hapticsEnabled
+                ? 'Tactile haptic vibration enabled on barcode detection and scan completion'
+                : 'Enable tactile haptic vibration feedback'
+            }
+          >
+            <Smartphone
+              className={`w-3.5 h-3.5 ${
+                hapticsEnabled ? 'text-emerald-600 dark:text-emerald-400' : ''
+              }`}
+            />
+            <span className="hidden sm:inline">
+              {hapticsEnabled ? 'Haptics On' : 'Haptics Off'}
+            </span>
+          </button>
 
           {/* Browser Push Notification Toggle */}
           <button

@@ -39,16 +39,24 @@ import {
   SlidersHorizontal,
   ToggleLeft,
   ToggleRight,
+  Zap,
+  Plus,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
 import { NutritionHealthChart } from './NutritionHealthChart.tsx';
+import { NutritionalProfileVisualizer } from './NutritionalProfileVisualizer.tsx';
 import { HealthConsciousNutritionalBarChart } from './HealthConsciousNutritionalBarChart.tsx';
 import { NutritionalAnalysisTable } from './NutritionalAnalysisTable.tsx';
 import { MarketComparison } from './MarketComparison.tsx';
 import { ShareableImageGenerator } from './ShareableImageGenerator.tsx';
 import { AddToPantryModal } from './AddToPantryModal.tsx';
-import { PantryItem } from '../types/pantry.ts';
+import {
+  PantryItem,
+  AutoQuickSaveMode,
+  estimatePantryDefaults,
+  createQuickSavePantryItem,
+} from '../types/pantry.ts';
 import {
   RegionalAssessmentResult,
   RegionalStandardId,
@@ -118,8 +126,15 @@ interface ProductResultCardProps {
   onToggleFavorite?: () => void;
   isInShoppingList?: boolean;
   onToggleShoppingList?: () => void;
+  onQuickSaveShoppingList?: () => void;
   isInPantry?: boolean;
   onAddToPantry?: (item: PantryItem) => void;
+  onQuickSavePantry?: () => void;
+  onQuickSaveBoth?: () => void;
+  autoQuickSaveMode?: AutoQuickSaveMode;
+  onChangeAutoQuickSaveMode?: (mode: AutoQuickSaveMode) => void;
+  onViewShoppingList?: () => void;
+  onViewPantry?: () => void;
   isOfflineCached?: boolean;
   cachedAt?: string | number;
   onSelectAlternative?: (barcode: string) => void;
@@ -138,8 +153,15 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   onToggleFavorite,
   isInShoppingList = false,
   onToggleShoppingList,
+  onQuickSaveShoppingList,
   isInPantry = false,
   onAddToPantry,
+  onQuickSavePantry,
+  onQuickSaveBoth,
+  autoQuickSaveMode = 'off',
+  onChangeAutoQuickSaveMode,
+  onViewShoppingList,
+  onViewPantry,
   isOfflineCached = false,
   cachedAt,
   onSelectAlternative,
@@ -160,6 +182,72 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [qrBadgePngUrl, setQrBadgePngUrl] = useState<string>('');
   const [isEntered, setIsEntered] = useState<boolean>(false);
+  const [quickSaveNotice, setQuickSaveNotice] = useState<{
+    target: 'shopping-list' | 'pantry' | 'both';
+    message: string;
+    detail?: string;
+  } | null>(null);
+
+  const pantryEstimate = React.useMemo(
+    () => estimatePantryDefaults(product, evaluation),
+    [product, evaluation]
+  );
+
+  useEffect(() => {
+    if (!quickSaveNotice) return;
+    const timer = setTimeout(() => setQuickSaveNotice(null), 4200);
+    return () => clearTimeout(timer);
+  }, [quickSaveNotice]);
+
+  const handleQuickSaveListClick = () => {
+    if (onQuickSaveShoppingList) {
+      onQuickSaveShoppingList();
+    } else if (onToggleShoppingList && !isInShoppingList) {
+      onToggleShoppingList();
+    }
+    setQuickSaveNotice({
+      target: 'shopping-list',
+      message: `Quick-saved "${product.product_name}" to Shopping List`,
+      detail: 'Added 1 item · Cumulative Halal risk updated',
+    });
+  };
+
+  const handleQuickSavePantryClick = () => {
+    if (onQuickSavePantry) {
+      onQuickSavePantry();
+    } else if (onAddToPantry) {
+      const autoItem = createQuickSavePantryItem(product, evaluation);
+      onAddToPantry(autoItem);
+    }
+    setQuickSaveNotice({
+      target: 'pantry',
+      message: `Quick-saved "${product.product_name}" to Digital Pantry`,
+      detail: `Auto-stored in ${pantryEstimate.defaultLocation} · +${pantryEstimate.defaultDays}d shelf-life`,
+    });
+  };
+
+  const handleQuickSaveBothClick = () => {
+    if (onQuickSaveBoth) {
+      onQuickSaveBoth();
+    } else {
+      if (onQuickSaveShoppingList) {
+        onQuickSaveShoppingList();
+      } else if (onToggleShoppingList && !isInShoppingList) {
+        onToggleShoppingList();
+      }
+      if (onQuickSavePantry) {
+        onQuickSavePantry();
+      } else if (onAddToPantry) {
+        const autoItem = createQuickSavePantryItem(product, evaluation);
+        onAddToPantry(autoItem);
+      }
+    }
+    setQuickSaveNotice({
+      target: 'both',
+      message: `Quick-saved "${product.product_name}" to Shopping List & Pantry`,
+      detail: `Shopping List + ${pantryEstimate.defaultLocation} (+${pantryEstimate.defaultDays}d)`,
+    });
+  };
 
   // Nutritional Alerts Preferences state (syncs with localStorage & global settings)
   const [nutritionalAlertPrefs, setNutritionalAlertPrefs] = useState<NutritionalAlertsPreferences>(
@@ -1060,15 +1148,15 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
               <span className="hidden sm:inline">{favoriteActive ? 'Favorited' : 'Favorite'}</span>
             </button>
 
-            {onToggleShoppingList && (
+            {(onToggleShoppingList || onQuickSaveShoppingList) && (
               <button
-                onClick={onToggleShoppingList}
+                onClick={handleQuickSaveListClick}
                 className={`p-2 sm:px-3 sm:py-2 text-xs font-medium border rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
                   isInShoppingList
                     ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold'
                     : 'bg-white dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700'
                 }`}
-                title={isInShoppingList ? 'Remove from Shopping List' : 'Add to Shopping List to track cumulative Halal risk'}
+                title="1-click Quick-Save to Shopping List"
               >
                 <ShoppingCart
                   className={`w-4 h-4 ${
@@ -1076,20 +1164,20 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                   }`}
                 />
                 <span className="hidden sm:inline">
-                  {isInShoppingList ? 'In Shopping List' : 'Add to List'}
+                  {isInShoppingList ? 'Saved in List' : 'Quick-Save List'}
                 </span>
               </button>
             )}
 
-            {onAddToPantry && (
+            {(onAddToPantry || onQuickSavePantry) && (
               <button
-                onClick={() => setIsPantryModalOpen(true)}
+                onClick={handleQuickSavePantryClick}
                 className={`p-2 sm:px-3 sm:py-2 text-xs font-medium border rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
                   isInPantry
                     ? 'bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold'
                     : 'bg-white dark:bg-stone-800 border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-50 dark:hover:bg-stone-700'
                 }`}
-                title={isInPantry ? 'Logged in Pantry (Click to edit or add another)' : 'Log item into Digital Pantry & track expiration'}
+                title={`1-click Quick-Save to Digital Pantry (${pantryEstimate.defaultLocation} · +${pantryEstimate.defaultDays}d)`}
               >
                 <Package
                   className={`w-4 h-4 ${
@@ -1097,12 +1185,177 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
                   }`}
                 />
                 <span className="hidden sm:inline">
-                  {isInPantry ? 'In Pantry' : 'Pantry'}
+                  {isInPantry ? 'Saved in Pantry' : 'Quick-Save Pantry'}
                 </span>
               </button>
             )}
           </div>
         </div>
+      </div>
+
+      {/* Quick-Save Action Bar & Auto-Save Selector on Scan Result Screen */}
+      <div className="px-5 sm:px-6 py-3.5 bg-emerald-50/50 dark:bg-emerald-950/25 border-b border-stone-200/80 dark:border-stone-800 space-y-3">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          {/* Left: 1-Click Quick-Save Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800 dark:text-stone-200 mr-1">
+              <Zap className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <span>Quick-Save Scan:</span>
+            </div>
+
+            {/* 1-Click Quick-Save to Shopping List */}
+            <button
+              type="button"
+              onClick={handleQuickSaveListClick}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                isInShoppingList
+                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                  : 'bg-white dark:bg-stone-800 text-stone-800 dark:text-stone-100 border-stone-200 dark:border-stone-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:bg-emerald-50/60 dark:hover:bg-emerald-950/40'
+              }`}
+              title="Automatically add this scanned product to your Shopping List with 1 click"
+            >
+              {isInShoppingList ? (
+                <Check className="w-3.5 h-3.5 text-white shrink-0" />
+              ) : (
+                <ShoppingCart className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              )}
+              <span>{isInShoppingList ? 'In Shopping List (+1)' : '+ Shopping List'}</span>
+            </button>
+
+            {/* 1-Click Quick-Save to Pantry (Smart Defaults) */}
+            <button
+              type="button"
+              onClick={handleQuickSavePantryClick}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                isInPantry
+                  ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                  : 'bg-white dark:bg-stone-800 text-stone-800 dark:text-stone-100 border-stone-200 dark:border-stone-700 hover:border-emerald-500 dark:hover:border-emerald-500 hover:bg-emerald-50/60 dark:hover:bg-emerald-950/40'
+              }`}
+              title={`Automatically add to Digital Pantry in ${pantryEstimate.defaultLocation} with +${pantryEstimate.defaultDays} days shelf-life`}
+            >
+              {isInPantry ? (
+                <Check className="w-3.5 h-3.5 text-white shrink-0" />
+              ) : (
+                <Package className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              )}
+              <span>
+                {isInPantry
+                  ? `In Pantry (${pantryEstimate.defaultLocation})`
+                  : `+ Pantry (${pantryEstimate.defaultLocation} · ${pantryEstimate.defaultDays}d)`}
+              </span>
+            </button>
+
+            {/* 1-Click Quick-Save Both */}
+            <button
+              type="button"
+              onClick={handleQuickSaveBothClick}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 dark:border-emerald-800/80 bg-emerald-100/80 dark:bg-emerald-950/70 hover:bg-emerald-200/80 dark:hover:bg-emerald-900/70 text-emerald-900 dark:text-emerald-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+              title="Quick-save this product to both Shopping List and Digital Pantry simultaneously"
+            >
+              <Plus className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
+              <span>Save to Both</span>
+            </button>
+
+            {/* Custom Pantry Modal Trigger */}
+            {onAddToPantry && (
+              <button
+                type="button"
+                onClick={() => setIsPantryModalOpen(true)}
+                className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors cursor-pointer"
+                title="Customize storage location, quantity, or expiration date before saving to Pantry"
+              >
+                Customize Pantry…
+              </button>
+            )}
+          </div>
+
+          {/* Right: Auto-Save Future Scans Mode Selector */}
+          {onChangeAutoQuickSaveMode && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-medium text-stone-600 dark:text-stone-400">
+                Auto-Save Scans:
+              </span>
+              <div
+                className="inline-flex items-center p-0.5 rounded-lg bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 text-[11px]"
+                role="group"
+                aria-label="Automatic Quick-Save on Scan Mode"
+              >
+                {(
+                  [
+                    { id: 'off', label: 'Manual' },
+                    { id: 'shopping-list', label: 'Auto → List' },
+                    { id: 'pantry', label: 'Auto → Pantry' },
+                    { id: 'both', label: 'Auto → Both' },
+                  ] as { id: AutoQuickSaveMode; label: string }[]
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onChangeAutoQuickSaveMode(opt.id)}
+                    className={`px-2 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
+                      autoQuickSaveMode === opt.id
+                        ? 'bg-emerald-700 text-white shadow-xs'
+                        : 'text-stone-600 dark:text-stone-400 hover:text-stone-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Inline Quick-Save Toast Confirmation inside Scan Result Screen */}
+        {quickSaveNotice && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="p-3 rounded-xl bg-emerald-700 text-white flex flex-wrap items-center justify-between gap-2 text-xs shadow-sm animate-in fade-in slide-in-from-top-1 duration-200"
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-200 shrink-0" />
+              <div>
+                <span className="font-bold">{quickSaveNotice.message}</span>
+                {quickSaveNotice.detail && (
+                  <span className="text-emerald-100 ml-1.5">· {quickSaveNotice.detail}</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {(quickSaveNotice.target === 'shopping-list' || quickSaveNotice.target === 'both') &&
+                onViewShoppingList && (
+                  <button
+                    type="button"
+                    onClick={onViewShoppingList}
+                    className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <span>View Shopping List</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                )}
+              {(quickSaveNotice.target === 'pantry' || quickSaveNotice.target === 'both') &&
+                onViewPantry && (
+                  <button
+                    type="button"
+                    onClick={onViewPantry}
+                    className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <span>View Pantry</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                )}
+              <button
+                type="button"
+                onClick={() => setQuickSaveNotice(null)}
+                className="p-1 text-emerald-200 hover:text-white cursor-pointer"
+                aria-label="Dismiss notification"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Regional Halal Certification Authority Adjustment Strip */}
@@ -1967,6 +2220,16 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
             </div>
           </div>
 
+          {/* Recharts 'Nutritional Profile' Macro-Nutrients Visualizer (Fat, Protein, Carbs vs. Daily Recommended Values) */}
+          <NutritionalProfileVisualizer
+            nutriments={product.nutriments}
+            servingSize={product.serving_size}
+            productName={product.product_name}
+            categories={product.categories}
+            ingredientsText={product.ingredients_text}
+            halalStatus={evaluation.status}
+          />
+
           {/* Recharts Health-Impact Radar / Bar Chart Visualization */}
           <NutritionHealthChart
             calories={calories !== null ? Number(calories) : null}
@@ -1980,9 +2243,19 @@ export const ProductResultCard: React.FC<ProductResultCardProps> = ({
           />
         </>
         ) : (
-          <div className="p-3.5 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2">
-            <Info className="w-4 h-4 text-stone-400 shrink-0" />
-            <span>Nutritional values are not available or not reported on the Open Food Facts label for this item.</span>
+          <div className="space-y-4">
+            <div className="p-3.5 bg-white dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl text-xs text-stone-500 dark:text-stone-400 flex items-center gap-2">
+              <Info className="w-4 h-4 text-stone-400 shrink-0" />
+              <span>Exact nutrition label values were not reported on Open Food Facts; displaying category-estimated macro-nutrient profile below.</span>
+            </div>
+            <NutritionalProfileVisualizer
+              nutriments={product.nutriments}
+              servingSize={product.serving_size}
+              productName={product.product_name}
+              categories={product.categories}
+              ingredientsText={product.ingredients_text}
+              halalStatus={evaluation.status}
+            />
           </div>
         )}
       </div>

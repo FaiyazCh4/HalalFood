@@ -11,7 +11,15 @@ import { ShoppingList, ShoppingListItem } from './components/ShoppingList.tsx';
 import { PantryTracker } from './components/PantryTracker.tsx';
 import { AddToPantryModal } from './components/AddToPantryModal.tsx';
 import { HalalMaps } from './components/HalalMaps.tsx';
-import { PantryItem, calculateDaysRemaining } from './types/pantry.ts';
+import {
+  PantryItem,
+  calculateDaysRemaining,
+  AutoQuickSaveMode,
+  getAutoQuickSaveMode,
+  saveAutoQuickSaveMode,
+  createQuickSavePantryItem,
+  estimatePantryDefaults,
+} from './types/pantry.ts';
 import { generateSamplePantryItems } from './utils/pantrySamples.ts';
 import { DietaryGuideModal } from './components/DietaryGuideModal.tsx';
 import { UpgradeModal } from './components/UpgradeModal.tsx';
@@ -60,7 +68,17 @@ import {
   BellRing,
   Package,
   MapPin,
+  ShoppingCart,
+  X,
+  Zap,
 } from 'lucide-react';
+
+interface QuickSaveToastPayload {
+  id: number;
+  title: string;
+  message: string;
+  target: 'shopping-list' | 'pantry' | 'both';
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTabId>('scanner');
@@ -70,6 +88,10 @@ export default function App() {
   const [isAiAnalyzing, setIsAiAnalyzing] = useState<boolean>(false);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [infoToast, setInfoToast] = useState<string | null>(null);
+  const [quickSaveToast, setQuickSaveToast] = useState<QuickSaveToastPayload | null>(null);
+  const [autoQuickSaveMode, setAutoQuickSaveMode] = useState<AutoQuickSaveMode>(() =>
+    getAutoQuickSaveMode()
+  );
   const [scanPushBanner, setScanPushBanner] = useState<ScanNotificationPayload | null>(null);
   const [regionState, setRegionState] = useState<DetectedRegionState>(() =>
     detectUserRegionalStandard()
@@ -355,6 +377,188 @@ export default function App() {
     localStorage.removeItem('halalcheck_favorites');
   };
 
+  // Auto-dismiss floating Quick-Save toast after 4.5s
+  useEffect(() => {
+    if (!quickSaveToast) return;
+    const timer = setTimeout(() => {
+      setQuickSaveToast(null);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [quickSaveToast]);
+
+  const handleQuickSaveToShoppingList = (
+    product: ProductData,
+    evalData: EvaluationData,
+    isAuto = false
+  ) => {
+    setShoppingList((prev) => {
+      const existingIndex = prev.findIndex((item) => item.product.code === product.code);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          quantity: (updated[existingIndex].quantity || 1) + 1,
+          evaluation: evalData,
+        };
+        return updated;
+      }
+      const newItem: ShoppingListItem = {
+        id: product.code,
+        addedAt: Date.now(),
+        quantity: 1,
+        checked: false,
+        product,
+        evaluation: evalData,
+      };
+      return [newItem, ...prev];
+    });
+
+    const title = isAuto ? 'Auto Quick-Saved to Shopping List' : 'Quick-Saved to Shopping List';
+    const message = `"${product.product_name}" was added to your Shopping List with cumulative Halal risk tracking.`;
+    setQuickSaveToast({
+      id: Date.now(),
+      title,
+      message,
+      target: 'shopping-list',
+    });
+    setInfoToast(`${title}: ${message}`);
+  };
+
+  const handleQuickSaveToPantry = (
+    product: ProductData,
+    evalData: EvaluationData,
+    isAuto = false
+  ) => {
+    const autoItem = createQuickSavePantryItem(product, evalData);
+    const defaults = estimatePantryDefaults(product, evalData);
+
+    setPantry((prev) => {
+      const existingIndex = prev.findIndex((i) => i.product.code === product.code);
+      if (existingIndex >= 0) {
+        const copy = [...prev];
+        copy[existingIndex] = {
+          ...copy[existingIndex],
+          quantity: (copy[existingIndex].quantity || 1) + 1,
+          evaluation: evalData,
+        };
+        return copy;
+      }
+      return [autoItem, ...prev];
+    });
+
+    const title = isAuto ? 'Auto Quick-Saved to Digital Pantry' : 'Quick-Saved to Digital Pantry';
+    const message = `"${product.product_name}" was automatically stored in ${defaults.defaultLocation} (use-by: ${autoItem.expirationDate}, +${defaults.defaultDays}d).`;
+    setQuickSaveToast({
+      id: Date.now(),
+      title,
+      message,
+      target: 'pantry',
+    });
+    setInfoToast(`${title}: ${message}`);
+  };
+
+  const handleQuickSaveBoth = (
+    product: ProductData,
+    evalData: EvaluationData,
+    isAuto = false
+  ) => {
+    const autoItem = createQuickSavePantryItem(product, evalData);
+    const defaults = estimatePantryDefaults(product, evalData);
+
+    setShoppingList((prev) => {
+      const existingIndex = prev.findIndex((item) => item.product.code === product.code);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          quantity: (updated[existingIndex].quantity || 1) + 1,
+          evaluation: evalData,
+        };
+        return updated;
+      }
+      return [
+        {
+          id: product.code,
+          addedAt: Date.now(),
+          quantity: 1,
+          checked: false,
+          product,
+          evaluation: evalData,
+        },
+        ...prev,
+      ];
+    });
+
+    setPantry((prev) => {
+      const existingIndex = prev.findIndex((i) => i.product.code === product.code);
+      if (existingIndex >= 0) {
+        const copy = [...prev];
+        copy[existingIndex] = {
+          ...copy[existingIndex],
+          quantity: (copy[existingIndex].quantity || 1) + 1,
+          evaluation: evalData,
+        };
+        return copy;
+      }
+      return [autoItem, ...prev];
+    });
+
+    const title = isAuto
+      ? 'Auto Quick-Saved to Shopping List & Pantry'
+      : 'Quick-Saved to Shopping List & Pantry';
+    const message = `"${product.product_name}" was added to your Shopping List and stored in ${defaults.defaultLocation} (+${defaults.defaultDays}d).`;
+    setQuickSaveToast({
+      id: Date.now(),
+      title,
+      message,
+      target: 'both',
+    });
+    setInfoToast(`${title}: ${message}`);
+  };
+
+  const handleChangeAutoQuickSaveMode = (
+    mode: AutoQuickSaveMode,
+    currentProduct?: ProductData | null,
+    currentEval?: EvaluationData | null
+  ) => {
+    setAutoQuickSaveMode(mode);
+    saveAutoQuickSaveMode(mode);
+
+    if (mode === 'off') {
+      setInfoToast('Automatic Quick-Save on scan set to Manual mode.');
+      return;
+    }
+
+    if (currentProduct && currentEval) {
+      if (mode === 'shopping-list') {
+        handleQuickSaveToShoppingList(currentProduct, currentEval, true);
+      } else if (mode === 'pantry') {
+        handleQuickSaveToPantry(currentProduct, currentEval, true);
+      } else if (mode === 'both') {
+        handleQuickSaveBoth(currentProduct, currentEval, true);
+      }
+    } else {
+      const modeLabel =
+        mode === 'shopping-list'
+          ? 'Shopping List'
+          : mode === 'pantry'
+          ? 'Digital Pantry'
+          : 'Shopping List & Pantry';
+      setInfoToast(`Auto Quick-Save enabled: Scanned products will automatically be saved to ${modeLabel}.`);
+    }
+  };
+
+  const performAutoQuickSaveIfEnabled = (product: ProductData, evalData: EvaluationData) => {
+    const activeMode = getAutoQuickSaveMode();
+    if (activeMode === 'shopping-list') {
+      handleQuickSaveToShoppingList(product, evalData, true);
+    } else if (activeMode === 'pantry') {
+      handleQuickSaveToPantry(product, evalData, true);
+    } else if (activeMode === 'both') {
+      handleQuickSaveBoth(product, evalData, true);
+    }
+  };
+
   // Save shopping list on changes
   useEffect(() => {
     try {
@@ -441,9 +645,14 @@ export default function App() {
       }
       return [item, ...prev];
     });
-    setInfoToast(
-      `Logged "${item.product.product_name}" into your Pantry (${item.storageLocation}, use-by: ${item.expirationDate}).`
-    );
+    const message = `Logged "${item.product.product_name}" into your Pantry (${item.storageLocation}, use-by: ${item.expirationDate}).`;
+    setQuickSaveToast({
+      id: Date.now(),
+      title: 'Saved to Digital Pantry',
+      message,
+      target: 'pantry',
+    });
+    setInfoToast(message);
   };
 
   const handleUpdatePantryItem = (item: PantryItem) => {
@@ -527,6 +736,7 @@ export default function App() {
           setCachedReportTime(cached.cachedAt || cached.timestamp);
           setInfoToast(`Offline Mode: Loaded cached report for "${cached.product.product_name}" from IndexedDB.`);
           notifyScanComplete(cached.product, cached.evaluation);
+          performAutoQuickSaveIfEnabled(cached.product, cached.evaluation);
           setActiveTab('scanner');
           return;
         } else {
@@ -554,6 +764,7 @@ export default function App() {
         setIsReportFromCache(true);
         setCachedReportTime(cached.cachedAt || cached.timestamp);
         setInfoToast(`Loaded previous report for "${cached.product.product_name}" from IndexedDB cache.`);
+        performAutoQuickSaveIfEnabled(cached.product, cached.evaluation);
         setActiveTab('scanner');
         return;
       }
@@ -586,6 +797,7 @@ export default function App() {
           setIsReportFromCache(true);
           setCachedReportTime(cached.cachedAt || cached.timestamp);
           setInfoToast(`Served from on-device IndexedDB cache: ${cached.product.product_name}`);
+          performAutoQuickSaveIfEnabled(cached.product, cached.evaluation);
           setActiveTab('scanner');
           return;
         }
@@ -605,6 +817,7 @@ export default function App() {
       setIsReportFromCache(false);
       setCachedReportTime(undefined);
       notifyScanComplete(data.product, data.evaluation);
+      performAutoQuickSaveIfEnabled(data.product, data.evaluation);
 
       // Save report in IndexedDB cache for offline access
       try {
@@ -928,7 +1141,9 @@ export default function App() {
             <div className="flex items-start gap-2.5">
               <CheckCircle className="w-5 h-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold text-emerald-950 dark:text-emerald-100">IndexedDB Storage</p>
+                <p className="font-semibold text-emerald-950 dark:text-emerald-100">
+                  {quickSaveToast ? quickSaveToast.title : 'HalalCheck Notification'}
+                </p>
                 <p className="text-emerald-800 dark:text-emerald-300 mt-0.5 leading-relaxed">{infoToast}</p>
               </div>
             </div>
@@ -938,6 +1153,71 @@ export default function App() {
             >
               Dismiss
             </button>
+          </div>
+        )}
+
+        {/* Floating Quick-Save Success Toast Notification */}
+        {quickSaveToast && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed bottom-16 md:bottom-6 right-4 left-4 sm:left-auto sm:w-96 z-50 bg-stone-900 dark:bg-stone-800 text-white rounded-2xl border border-emerald-500/40 p-4 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-300"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <Zap className="w-4 h-4" />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span className="text-xs font-bold text-emerald-300">
+                      {quickSaveToast.title}
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-200 leading-relaxed">
+                    {quickSaveToast.message}
+                  </p>
+                  <div className="pt-1.5 flex flex-wrap items-center gap-2">
+                    {(quickSaveToast.target === 'shopping-list' ||
+                      quickSaveToast.target === 'both') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('shopping-list');
+                          setQuickSaveToast(null);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <ShoppingCart className="w-3 h-3" />
+                        <span>Open Shopping List</span>
+                      </button>
+                    )}
+                    {(quickSaveToast.target === 'pantry' || quickSaveToast.target === 'both') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('pantry');
+                          setQuickSaveToast(null);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <Package className="w-3 h-3" />
+                        <span>Open Pantry</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuickSaveToast(null)}
+                className="p-1 text-stone-400 hover:text-white rounded-lg transition-colors cursor-pointer shrink-0"
+                aria-label="Close toast notification"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -965,8 +1245,27 @@ export default function App() {
                 onToggleShoppingList={() =>
                   handleToggleShoppingList(scannedProduct, activeRegionalResult.evaluation)
                 }
+                onQuickSaveShoppingList={() =>
+                  handleQuickSaveToShoppingList(scannedProduct, activeRegionalResult.evaluation)
+                }
                 isInPantry={pantry.some((item) => item.product.code === scannedProduct.code)}
                 onAddToPantry={(item) => handleAddToPantry(item)}
+                onQuickSavePantry={() =>
+                  handleQuickSaveToPantry(scannedProduct, activeRegionalResult.evaluation)
+                }
+                onQuickSaveBoth={() =>
+                  handleQuickSaveBoth(scannedProduct, activeRegionalResult.evaluation)
+                }
+                autoQuickSaveMode={autoQuickSaveMode}
+                onChangeAutoQuickSaveMode={(mode) =>
+                  handleChangeAutoQuickSaveMode(
+                    mode,
+                    scannedProduct,
+                    activeRegionalResult.evaluation
+                  )
+                }
+                onViewShoppingList={() => setActiveTab('shopping-list')}
+                onViewPantry={() => setActiveTab('pantry')}
                 isOfflineCached={isReportFromCache}
                 cachedAt={cachedReportTime}
                 onSelectAlternative={(barcode) => handleBarcodeDetected(barcode)}
